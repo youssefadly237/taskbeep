@@ -1,0 +1,15 @@
+[package]
+name = "taskbeep"
+authors = ["Jo. Adly <youssefadly237@gmail.com>"]
+description = "TaskBeep - Pomodoro Timer with Productivity Tracking"
+version = "0.1.9"
+edition = "2024"
+readme = "README.md"
+license = "MIT"
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+rodio = "0.21"
+ctrlc = "3.4"
+daemonize = "0.5"
+thiserror = "2.0"
