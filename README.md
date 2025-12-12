@@ -1,6 +1,7 @@
 # TaskBeep - Pomodoro Timer
 
-A Pomodoro timer with productivity tracking that plays a beep sound at the end of each interval.
+A Pomodoro timer with productivity tracking that plays a beep sound at the end
+of each interval.
 
 ## Features
 
@@ -74,7 +75,8 @@ taskbeep stop
 
 ## Integration with Waybar
 
-You can integrate this with Waybar to create a visual Pomodoro timer. Here's an example configuration:
+You can integrate this with Waybar to create a visual Pomodoro timer. Here's an
+example configuration:
 
 ### Waybar Config (`~/.config/waybar/config`)
 
@@ -87,9 +89,9 @@ You can integrate this with Waybar to create a visual Pomodoro timer. Here's an 
         "format": "󰔛 {text}",
         "escape": false,
         "tooltip": false,
-        "on-click": "taskbeep working",
-        "on-click-middle": "taskbeep toggle",
-        "on-click-right": "taskbeep wasting"
+        "on-click": "~/.config/waybar/scripts/pomodoro.sh working",
+        "on-click-middle": "~/.config/waybar/scripts/pomodoro.sh toggle",
+        "on-click-right": "~/.config/waybar/scripts/pomodoro.sh wasting",
     }
 }
 ```
@@ -98,9 +100,40 @@ You can integrate this with Waybar to create a visual Pomodoro timer. Here's an 
 
 ```bash
 #!/usr/bin/env bash
+export PATH="$HOME/.cargo/bin:$PATH"
 
-if ! raw=$(taskbeep status 2>/dev/null); then
+cmd="$1"
+
+if [[ -n "$cmd" ]]; then
+    case "$cmd" in
+        working)
+            taskbeep working
+            exit 0
+            ;;
+        toggle)
+            taskbeep toggle
+            exit 0
+            ;;
+        wasting)
+            taskbeep wasting
+            exit 0
+            ;;
+        *)
+            echo "Unknown command"
+            exit 1
+            ;;
+    esac
+fi
+
+raw=$(taskbeep status 2>/dev/null)
+
+if echo "$raw" | grep -q "Timer not running"; then
     echo '{"text":"Idle", "class":"idle"}'
+    exit 0
+fi
+
+if echo "$raw" | grep -q "Error"; then
+    echo '{"text":"error", "class":"error"}'
     exit 0
 fi
 
@@ -109,7 +142,6 @@ remaining=$(echo "$raw" | grep 'Time remaining:' | cut -d: -f2- | sed 's/^ *//')
 
 case "$status" in
 Running)
-    # Parse time format
     h=0 m=0 s=0
     [[ "$remaining" =~ ([0-9]+)h ]] && h=${BASH_REMATCH[1]}
     [[ "$remaining" =~ ([0-9]+)m ]] && m=${BASH_REMATCH[1]}
