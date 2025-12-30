@@ -1,6 +1,7 @@
 use clap::{Parser, Subcommand};
 use daemonize::Daemonize;
 use rodio::{Decoder, OutputStream, OutputStreamBuilder, Sink};
+use serde_json::json;
 use std::{
     collections::HashMap,
     fs::{self, File, OpenOptions},
@@ -56,7 +57,11 @@ enum Commands {
     /// Toggle between pause and resume
     Toggle,
     /// Show current timer status
-    Status,
+    Status {
+        /// Output format: human (default), json, or plain
+        #[arg(short, long, default_value = "human")]
+        format: String,
+    },
     /// Signal that you were working on the topic
     Working,
     /// Signal that you were wasting time
@@ -422,7 +427,7 @@ fn send_command(cmd: u8) -> Result<Vec<u8>> {
             return Err(e.into());
         }
     };
-    
+
     stream.set_read_timeout(Some(Duration::from_secs(2)))?;
     stream.set_write_timeout(Some(Duration::from_secs(2)))?;
 
@@ -1026,15 +1031,15 @@ fn stop_timer(working: bool, wasting: bool) -> Result<()> {
     }
 }
 
-fn show_status() -> Result<()> {
+fn show_status(format: &str) -> Result<()> {
     let status = get_status()?;
     let now = now_ms();
 
     let status_enum = Status::from_u8(status.status).unwrap_or(Status::Running);
     let status_str = match status_enum {
-        Status::Paused => "Paused",
-        Status::Waiting => "Waiting for response",
-        Status::Running => "Running",
+        Status::Paused => "paused",
+        Status::Waiting => "waiting",
+        Status::Running => "running",
     };
 
     let remaining = if status_enum == Status::Paused {
@@ -1044,14 +1049,57 @@ fn show_status() -> Result<()> {
         target.saturating_sub(now)
     };
 
-    println!("{}", status_str);
-    println!("Topic: {}", status.topic);
-    println!("Interval: {}s", status.interval_ms / MILLIS_PER_SECOND);
-    println!("Sessions completed: {}", status.count);
-    println!("Time remaining: {}", DurationDisplay(remaining));
+    let format_lower = format.to_lowercase();
+    match format_lower.as_str() {
+        "json" => {
+            let json_output = json!({
+                "status": status_str,
+                "topic": status.topic,
+                "interval_seconds": status.interval_ms / MILLIS_PER_SECOND,
+                "sessions_completed": status.count,
+                "remaining_seconds": remaining / MILLIS_PER_SECOND
+            });
+            println!("{}", serde_json::to_string_pretty(&json_output).unwrap());
+        }
+        "plain" => {
+            println!("status={}", status_str);
+            // Escape newlines, carriage returns, and equals signs in topic for safe parsing
+            let escaped_topic = status
+                .topic
+                .replace('\\', "\\\\")
+                .replace('\n', "\\n")
+                .replace('\r', "\\r")
+                .replace('=', "\\=");
+            println!("topic={}", escaped_topic);
+            println!(
+                "interval_seconds={}",
+                status.interval_ms / MILLIS_PER_SECOND
+            );
+            println!("sessions_completed={}", status.count);
+            println!("remaining_seconds={}", remaining / MILLIS_PER_SECOND);
+        }
+        _ => {
+            if !format_lower.is_empty() && format_lower != "human" {
+                eprintln!(
+                    "Warning: Invalid format '{}', defaulting to 'human'. Valid options: human, json, plain",
+                    format
+                );
+            }
+            let human_status = match status_enum {
+                Status::Paused => "Paused",
+                Status::Waiting => "Waiting for response",
+                Status::Running => "Running",
+            };
+            println!("{}", human_status);
+            println!("Topic: {}", status.topic);
+            println!("Interval: {}s", status.interval_ms / MILLIS_PER_SECOND);
+            println!("Sessions completed: {}", status.count);
+            println!("Time remaining: {}", DurationDisplay(remaining));
 
-    if status_enum == Status::Waiting {
-        println!("\nRespond with: taskbeep working  OR  taskbeep wasting");
+            if status_enum == Status::Waiting {
+                println!("\nRespond with: taskbeep working  OR  taskbeep wasting");
+            }
+        }
     }
 
     Ok(())
@@ -1243,7 +1291,7 @@ fn main() {
             Ok(_) => pause_resume_toggle(CMD_TOGGLE, "paused"),
             Err(e) => Err(e),
         },
-        Commands::Status => show_status(),
+        Commands::Status { format } => show_status(&format),
         Commands::Working => send_signal(true),
         Commands::Wasting => send_signal(false),
         Commands::Stats {
