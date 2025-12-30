@@ -892,6 +892,7 @@ fn run_daemon(topic: String, interval_ms: u64) {
         }
 
         // Play beep and wait for response
+        let beep_time = now_ms();
         play_beep(&audio_stream);
         if let Ok(mut resp_state) = state.response_state.lock() {
             resp_state.start_waiting();
@@ -914,7 +915,7 @@ fn run_daemon(topic: String, interval_ms: u64) {
                     drop(resp_state);
                     let entry = StatsEntry {
                         start_time_ms: session_start,
-                        end_time_ms: now_ms(),
+                        end_time_ms: beep_time,
                         topic: topic.clone(),
                         was_working,
                     };
@@ -949,7 +950,7 @@ fn run_daemon(topic: String, interval_ms: u64) {
             };
             let entry = StatsEntry {
                 start_time_ms: session_start,
-                end_time_ms: now_ms(),
+                end_time_ms: beep_time,
                 topic: topic.clone(),
                 was_working: false,
             };
