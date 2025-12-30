@@ -311,6 +311,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
+name = "hound"
+version = "3.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "62adaabb884c94955b19907d60019f4e145d091c75345379e70d1ee696f7854f"
+
+[[package]]
 name = "indexmap"
 version = "2.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -862,11 +868,12 @@ dependencies = [
 
 [[package]]
 name = "taskbeep"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "clap",
  "ctrlc",
  "daemonize",
+ "hound",
  "rodio",
  "serde_json",
  "thiserror 2.0.17",

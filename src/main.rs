@@ -1,3 +1,5 @@
+mod audio;
+
 use clap::{Parser, Subcommand};
 use daemonize::Daemonize;
 use rodio::{Decoder, OutputStream, OutputStreamBuilder, Sink};
@@ -12,8 +14,8 @@ use std::{
     },
     path::PathBuf,
     sync::{
-        Arc, Condvar, Mutex,
         atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc, Condvar, Mutex, OnceLock,
     },
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -107,8 +109,13 @@ const MIN_INTERVAL_SECS: u64 = 1;
 const MAX_INTERVAL_SECS: u64 = SECONDS_PER_DAY; // 24 hours
 const MAX_TOPIC_LEN: usize = 255;
 const RESPONSE_TIMEOUT_MS: u64 = 300_000; // 5 minutes
-const AUDIO_BYTES: &[u8] = include_bytes!("../taskbeep.wav");
 const STATS_VERSION: u8 = 1;
+
+static AUDIO_DATA: OnceLock<Vec<u8>> = OnceLock::new();
+
+fn get_audio_data() -> &'static [u8] {
+    AUDIO_DATA.get_or_init(audio::generate_beep_audio)
+}
 
 // Protocol commands
 const CMD_STOP: u8 = 0x01;
@@ -746,7 +753,7 @@ fn socket_handler(listener: UnixListener, state: Arc<TimerState>, topic: String,
 
 fn play_beep(output_stream: &Option<Arc<OutputStream>>) {
     if let Some(stream) = output_stream {
-        let cursor = Cursor::new(AUDIO_BYTES);
+        let cursor = Cursor::new(get_audio_data());
         if let Ok(source) = Decoder::new(cursor) {
             let sink = Sink::connect_new(stream.mixer());
             sink.append(source);

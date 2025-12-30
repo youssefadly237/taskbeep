@@ -228,6 +228,12 @@ This configuration:
     taskbeep stats
     ```
 
+## Installation
+
+```bash
+cargo install taskbeep
+```
+
 ## Building
 
 ```bash
@@ -240,4 +246,3 @@ The binary will be at `target/release/taskbeep`
 
 - Linux system with audio output
 - Rust 2024 edition or later
-- Audio file: `taskbeep.wav` in project root
