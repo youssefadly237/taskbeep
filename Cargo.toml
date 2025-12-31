@@ -1,6 +1,6 @@
 [package]
 name = "taskbeep"
-authors = ["Jo. Adly <youssefadly237@gmail.com>"]
+authors = ["J. Adly <youssefadly237@gmail.com>"]
 repository = "https://github.com/youssefadly237/taskbeep"
 description = "TaskBeep - Pomodoro Timer with Productivity Tracking"
 version = "0.1.12"
