@@ -1,6 +1,8 @@
 mod audio;
+mod config;
 
 use clap::{Parser, Subcommand};
+use config::Config;
 use daemonize::Daemonize;
 use rodio::{Decoder, OutputStream, OutputStreamBuilder, Sink};
 use serde_json::json;
@@ -14,8 +16,8 @@ use std::{
     },
     path::PathBuf,
     sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Condvar, Mutex, OnceLock,
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -35,13 +37,12 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Start a Pomodoro timer with a topic and interval in seconds (default 1500s/25min)
+    /// Start a Pomodoro timer with a topic and interval in seconds (configurable default)
     Start {
         /// The topic/task you're working on
         topic: String,
-        /// Interval in seconds (default 1500s/25 minutes)
-        #[arg(default_value_t = 1500)]
-        interval: u64,
+        /// Interval in seconds (default from config or 1500s/25 minutes)
+        interval: Option<u64>,
     },
     /// Stop and end the timer process
     Stop {
@@ -95,6 +96,15 @@ enum Commands {
         #[arg(short, long)]
         yes: bool,
     },
+    /// Manage configuration (show settings, view path, or reset to defaults)
+    Config {
+        /// Show the path to the config file
+        #[arg(long)]
+        path: bool,
+        /// Reset configuration to defaults
+        #[arg(long)]
+        reset: bool,
+    },
 }
 
 // Time constants
@@ -111,10 +121,26 @@ const MAX_TOPIC_LEN: usize = 255;
 const RESPONSE_TIMEOUT_MS: u64 = 300_000; // 5 minutes
 const STATS_VERSION: u8 = 1;
 
+static CONFIG: OnceLock<Config> = OnceLock::new();
 static AUDIO_DATA: OnceLock<Vec<u8>> = OnceLock::new();
 
+fn get_config() -> &'static Config {
+    CONFIG.get_or_init(Config::load)
+}
+
 fn get_audio_data() -> &'static [u8] {
-    AUDIO_DATA.get_or_init(audio::generate_beep_audio)
+    AUDIO_DATA.get_or_init(|| {
+        let config = get_config();
+        let audio_config = audio::AudioConfig {
+            beep_frequency: config.beep_frequency,
+            first_beep_duration: config.first_beep_duration,
+            second_beep_duration: config.second_beep_duration,
+            gap_duration: config.gap_duration,
+            pause_duration: config.pause_duration,
+            volume: config.volume,
+        };
+        audio::generate_beep_audio(&audio_config)
+    })
 }
 
 // Protocol commands
@@ -1288,7 +1314,10 @@ fn main() {
     let cli = Cli::parse();
 
     let result = match cli.command {
-        Commands::Start { topic, interval } => start_timer(topic, interval),
+        Commands::Start { topic, interval } => {
+            let interval = interval.unwrap_or_else(|| get_config().session_duration);
+            start_timer(topic, interval)
+        }
         Commands::Stop { working, wasting } => stop_timer(working, wasting),
         Commands::Pause => pause_resume_toggle(CMD_PAUSE, "paused"),
         Commands::Resume => pause_resume_toggle(CMD_RESUME, "resumed"),
@@ -1323,6 +1352,53 @@ fn main() {
         }
         Commands::Export { output } => export_stats(output),
         Commands::Clear { yes } => clear_stats(yes),
+        Commands::Config { path, reset } => {
+            if reset {
+                match Config::reset() {
+                    Ok(_) => {
+                        println!("Configuration reset to defaults");
+                        println!("Config file: {}", Config::config_path().display());
+                        Ok(())
+                    }
+                    Err(e) => Err(TaskBeepError::ConfigError(format!(
+                        "Failed to reset config: {}",
+                        e
+                    ))),
+                }
+            } else if path {
+                let config_path = Config::config_path();
+                println!("{}", config_path.display());
+                if !config_path.exists() {
+                    println!("(file does not exist yet - will be created on first use)");
+                }
+                Ok(())
+            } else {
+                println!("Config file: {}", Config::config_path().display());
+                println!("\nCurrent configuration:");
+                let config = get_config();
+                println!(
+                    "  session_duration:       {} seconds ({}m)",
+                    config.session_duration,
+                    config.session_duration / 60
+                );
+                println!("  volume:                 {} (0.0-1.0)", config.volume);
+                println!("  beep_frequency:         {} Hz", config.beep_frequency);
+                println!(
+                    "  first_beep_duration:    {} seconds",
+                    config.first_beep_duration
+                );
+                println!(
+                    "  second_beep_duration:   {} seconds",
+                    config.second_beep_duration
+                );
+                println!("  gap_duration:           {} seconds", config.gap_duration);
+                println!(
+                    "  pause_duration:         {} seconds",
+                    config.pause_duration
+                );
+                Ok(())
+            }
+        }
     };
 
     if let Err(e) = result {
