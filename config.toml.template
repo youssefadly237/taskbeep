@@ -24,3 +24,12 @@
 
 # Pause after beep pattern in seconds
 # pause_duration = 0.7
+
+## Script Execution
+# Optional script to run when the timer finishes (after the beep)
+# The script receives these environment variables:
+#   TASKBEEP_TOPIC - The current task topic
+#   TASKBEEP_DURATION - Session duration in seconds
+#   TASKBEEP_SESSION_COUNT - Number of completed sessions (including this one)
+# Use this to show notifications, popups (e.g., rofi), or ask if time was productive
+# on_timer_finish = "/path/to/your/script.sh"
