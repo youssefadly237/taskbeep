@@ -42,7 +42,6 @@ enum Commands {
         /// The topic/task you're working on
         topic: String,
         /// Interval in seconds (default from config or 1500s/25 minutes)
-        #[arg(default_value = None)]
         interval: Option<u64>,
     },
     /// Stop and end the timer process
@@ -97,7 +96,7 @@ enum Commands {
         #[arg(short, long)]
         yes: bool,
     },
-    /// Manage configuration
+    /// Manage configuration (show settings, view path, or reset to defaults)
     Config {
         /// Show the path to the config file
         #[arg(long)]

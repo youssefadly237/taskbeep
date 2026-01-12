@@ -6,12 +6,19 @@ const FADE_DURATION_S: f32 = 0.005;
 const BITS_PER_SAMPLE: u16 = 16;
 const MAX_AMPLITUDE: f32 = 32767.0;
 
+/// Configuration for generating the beep audio pattern.
 pub struct AudioConfig {
+    /// Frequency of the beeps in Hz
     pub beep_frequency: f32,
+    /// Duration of the first beep in seconds
     pub first_beep_duration: f32,
+    /// Duration of the second beep in seconds
     pub second_beep_duration: f32,
+    /// Duration of the silent gap between beeps in seconds
     pub gap_duration: f32,
+    /// Duration of the silent pause after the beep pattern in seconds
     pub pause_duration: f32,
+    /// Output volume (0.0 to 1.0)
     pub volume: f32,
 }
 
