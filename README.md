@@ -307,11 +307,11 @@ Quick setup:
 
 ```bash
 # Copy the script you want
-cp examples/on_beep/rofi_prompt.sh ~/.config/taskbeep/timer_finish.sh
-chmod +x ~/.config/taskbeep/timer_finish.sh
+cp examples/on_beep/rofi_prompt.sh "$HOME/.config/taskbeep/timer_finish.sh"
+chmod +x "$HOME/.config/taskbeep/timer_finish.sh"
 
 # Configure in ~/.config/taskbeep/config.toml
-echo 'on_timer_finish = "~/.config/taskbeep/timer_finish.sh"' >> ~/.config/taskbeep/config.toml
+echo "on_timer_finish = \"$HOME/.config/taskbeep/timer_finish.sh\"" >> "$HOME/.config/taskbeep/config.toml"
 ```
 
 ### Managing Configuration
