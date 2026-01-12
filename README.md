@@ -10,6 +10,7 @@ of each interval.
 - Signal whether you were working or wasting time
 - Track productivity statistics by topic
 - Integration-friendly (designed for use with Waybar or other status bars)
+- Run custom scripts on timer finish (for notifications, popups, automation)
 
 ## Usage
 
@@ -64,6 +65,7 @@ Shows:
 - Whether waiting for working/wasting response
 
 The `--format` flag supports three output formats:
+
 - `human` (default): Human-readable multi-line output
 - `json`: Structured JSON for easy parsing in scripts
 - `plain`: Simple key=value pairs, one per line
@@ -95,17 +97,17 @@ example configuration:
 
 ```json
 {
-    "custom/pomodoro": {
-        "exec": "~/.config/waybar/scripts/pomodoro.sh",
-        "return-type": "json",
-        "interval": 1,
-        "format": "󰔛 {text}",
-        "escape": false,
-        "tooltip": false,
-        "on-click": "~/.config/waybar/scripts/pomodoro.sh working",
-        "on-click-middle": "~/.config/waybar/scripts/pomodoro.sh toggle",
-        "on-click-right": "~/.config/waybar/scripts/pomodoro.sh wasting",
-    }
+  "custom/pomodoro": {
+    "exec": "~/.config/waybar/scripts/pomodoro.sh",
+    "return-type": "json",
+    "interval": 1,
+    "format": "󰔛 {text}",
+    "escape": false,
+    "tooltip": false,
+    "on-click": "~/.config/waybar/scripts/pomodoro.sh working",
+    "on-click-middle": "~/.config/waybar/scripts/pomodoro.sh toggle",
+    "on-click-right": "~/.config/waybar/scripts/pomodoro.sh wasting"
+  }
 }
 ```
 
@@ -187,12 +189,18 @@ echo "{\"text\":\"$text\", \"class\":\"$class\"}"
 
 ```css
 #custom-pomodoro {
-    padding: 0 10px;
-    background-color: #22223b;
+  padding: 0 10px;
+  background-color: #22223b;
 }
-#custom-pomodoro.running { color: #38b000; }
-#custom-pomodoro.paused  { color: #ffd60a; }
-#custom-pomodoro.waiting { color: #ff1744; }
+#custom-pomodoro.running {
+  color: #38b000;
+}
+#custom-pomodoro.paused {
+  color: #ffd60a;
+}
+#custom-pomodoro.waiting {
+  color: #ff1744;
+}
 ```
 
 This configuration:
@@ -206,9 +214,9 @@ This configuration:
 
 1. Start your work session:
 
-    ```bash
-    taskbeep start "Implement new feature" 1500
-    ```
+   ```bash
+   taskbeep start "Implement new feature" 1500
+   ```
 
 2. Work on your task for 25 minutes
 
@@ -216,17 +224,76 @@ This configuration:
 
 4. Signal your response (click in Waybar or run command):
 
-    ```bash
-    taskbeep working  # or wasting
-    ```
+   ```bash
+   taskbeep working  # or wasting
+   ```
 
 5. Take a break or start another session
 
 6. Review your statistics:
 
-    ```bash
-    taskbeep stats
-    ```
+   ```bash
+   taskbeep stats
+   ```
+
+## Configuration
+
+TaskBeep can be configured via a TOML configuration file located at `~/.config/taskbeep/config.toml`
+
+### Configuration Options
+
+- `session_duration`: Default session duration in seconds (default: 1500 / 25 minutes)
+- `volume`: Audio volume from 0.0 to 1.0 (default: 0.4)
+- `beep_frequency`: Beep sound frequency in Hz (default: 2048.0)
+- `first_beep_duration`: First beep duration in seconds (default: 0.08)
+- `second_beep_duration`: Second beep duration in seconds (default: 0.12)
+- `gap_duration`: Gap between beeps in seconds (default: 0.09)
+- `pause_duration`: Pause after beep pattern in seconds (default: 0.7)
+- `on_timer_finish`: Optional script to run when the timer finishes
+
+### Script Execution on Timer Finish
+
+You can configure a script to run automatically when the timer finishes (after
+the beep). This is useful for:
+
+- Showing custom notifications
+- Displaying interactive prompts (e.g., with rofi, fuzzel, dmenu)
+- Logging session information
+- Automating the working/wasting response
+
+Add this to your `config.toml`:
+
+```toml
+on_timer_finish = "/path/to/your/script.sh"
+```
+
+The script receives these environment variables:
+
+- `TASKBEEP_TOPIC`: The current task topic
+- `TASKBEEP_DURATION`: Session duration in seconds
+- `TASKBEEP_SESSION_COUNT`: Number of completed sessions (including the current one)
+
+#### Security
+
+Scripts run with your user privileges. TaskBeep validates:
+
+- The script path must be absolute (e.g., `/home/user/.config/taskbeep/script.sh`)
+- The script must exist and be executable (`chmod +x script.sh`)
+
+Only configure scripts you trust.
+
+### Managing Configuration
+
+```bash
+# Show configuration file path
+taskbeep config --path
+
+# Reset configuration to defaults
+taskbeep config --reset
+
+# View current configuration
+cat $(taskbeep config --path)
+```
 
 ## Installation
 

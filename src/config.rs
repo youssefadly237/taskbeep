@@ -38,6 +38,10 @@ pub struct Config {
     /// Pause after pattern in seconds (default: 0.7)
     #[serde(default = "default_pause_duration")]
     pub pause_duration: f32,
+
+    /// Optional script to run when timer finishes (after beep)
+    #[serde(default)]
+    pub on_timer_finish: Option<String>,
 }
 
 fn default_session_duration() -> u64 {
@@ -72,6 +76,7 @@ impl Default for Config {
             second_beep_duration: default_second_beep_duration(),
             gap_duration: default_gap_duration(),
             pause_duration: default_pause_duration(),
+            on_timer_finish: None,
         }
     }
 }
@@ -102,6 +107,43 @@ impl Config {
         if !self.pause_duration.is_finite() || self.pause_duration < 0.0 {
             return Err("pause_duration must be a finite non-negative number".to_string());
         }
+
+        // Validate script path
+        if let Some(script_path) = &self.on_timer_finish {
+            let path = PathBuf::from(script_path);
+
+            // Require absolute paths to prevent confusion
+            if !path.is_absolute() {
+                return Err("on_timer_finish must be an absolute path".to_string());
+            }
+
+            // Check if file exists
+            if !path.exists() {
+                return Err(format!(
+                    "on_timer_finish script does not exist: {}",
+                    script_path
+                ));
+            }
+
+            // Check if executable (Unix-specific)
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+
+                let metadata = std::fs::metadata(&path)
+                    .map_err(|e| format!("Cannot read script metadata: {}", e))?;
+
+                let mode = metadata.permissions().mode();
+
+                if mode & 0o111 == 0 {
+                    return Err(format!(
+                        "on_timer_finish script is not executable: {}",
+                        script_path
+                    ));
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -179,106 +221,136 @@ mod tests {
 
     #[test]
     fn test_session_duration_zero() {
-        let mut config = Config::default();
-        config.session_duration = 0;
+        let config = Config {
+            session_duration: 0,
+            ..Default::default()
+        };
         assert!(config.validate().is_err());
     }
 
     #[test]
     fn test_session_duration_exceeds_max() {
-        let mut config = Config::default();
-        config.session_duration = 86401;
+        let config = Config {
+            session_duration: 86401,
+            ..Default::default()
+        };
         assert!(config.validate().is_err());
     }
 
     #[test]
     fn test_session_duration_at_max() {
-        let mut config = Config::default();
-        config.session_duration = 86400;
+        let config = Config {
+            session_duration: 86400,
+            ..Default::default()
+        };
         assert!(config.validate().is_ok());
     }
 
     #[test]
     fn test_volume_negative() {
-        let mut config = Config::default();
-        config.volume = -0.1;
+        let config = Config {
+            volume: -0.1,
+            ..Default::default()
+        };
         assert!(config.validate().is_err());
     }
 
     #[test]
     fn test_volume_exceeds_max() {
-        let mut config = Config::default();
-        config.volume = 1.1;
+        let config = Config {
+            volume: 1.1,
+            ..Default::default()
+        };
         assert!(config.validate().is_err());
     }
 
     #[test]
     fn test_volume_nan() {
-        let mut config = Config::default();
-        config.volume = f32::NAN;
+        let config = Config {
+            volume: f32::NAN,
+            ..Default::default()
+        };
         assert!(config.validate().is_err());
     }
 
     #[test]
     fn test_volume_infinity() {
-        let mut config = Config::default();
-        config.volume = f32::INFINITY;
+        let config = Config {
+            volume: f32::INFINITY,
+            ..Default::default()
+        };
         assert!(config.validate().is_err());
     }
 
     #[test]
     fn test_beep_frequency_zero() {
-        let mut config = Config::default();
-        config.beep_frequency = 0.0;
+        let config = Config {
+            beep_frequency: 0.0,
+            ..Default::default()
+        };
         assert!(config.validate().is_err());
     }
 
     #[test]
     fn test_beep_frequency_negative() {
-        let mut config = Config::default();
-        config.beep_frequency = -100.0;
+        let config = Config {
+            beep_frequency: -100.0,
+            ..Default::default()
+        };
         assert!(config.validate().is_err());
     }
 
     #[test]
     fn test_beep_frequency_nan() {
-        let mut config = Config::default();
-        config.beep_frequency = f32::NAN;
+        let config = Config {
+            beep_frequency: f32::NAN,
+            ..Default::default()
+        };
         assert!(config.validate().is_err());
     }
 
     #[test]
     fn test_first_beep_duration_zero() {
-        let mut config = Config::default();
-        config.first_beep_duration = 0.0;
+        let config = Config {
+            first_beep_duration: 0.0,
+            ..Default::default()
+        };
         assert!(config.validate().is_err());
     }
 
     #[test]
     fn test_first_beep_duration_negative() {
-        let mut config = Config::default();
-        config.first_beep_duration = -0.1;
+        let config = Config {
+            first_beep_duration: -0.1,
+            ..Default::default()
+        };
         assert!(config.validate().is_err());
     }
 
     #[test]
     fn test_gap_duration_negative() {
-        let mut config = Config::default();
-        config.gap_duration = -0.1;
+        let config = Config {
+            gap_duration: -0.1,
+            ..Default::default()
+        };
         assert!(config.validate().is_err());
     }
 
     #[test]
     fn test_gap_duration_zero_is_valid() {
-        let mut config = Config::default();
-        config.gap_duration = 0.0;
+        let config = Config {
+            gap_duration: 0.0,
+            ..Default::default()
+        };
         assert!(config.validate().is_ok());
     }
 
     #[test]
     fn test_pause_duration_nan() {
-        let mut config = Config::default();
-        config.pause_duration = f32::NAN;
+        let config = Config {
+            pause_duration: f32::NAN,
+            ..Default::default()
+        };
         assert!(config.validate().is_err());
     }
 }

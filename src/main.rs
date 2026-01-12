@@ -788,6 +788,38 @@ fn play_beep(output_stream: &Option<Arc<OutputStream>>) {
     }
 }
 
+fn execute_timer_finish_script(
+    script_path: Option<&PathBuf>,
+    topic: &str,
+    duration_secs: u64,
+    session_count: u64,
+) {
+    let Some(script_path) = script_path else {
+        return;
+    };
+
+    let topic = topic
+        .chars()
+        .filter(|c| c.is_ascii_graphic() || *c == ' ')
+        .take(256)
+        .collect::<String>();
+
+    let result = std::process::Command::new(script_path)
+        .env("TASKBEEP_TOPIC", topic)
+        .env("TASKBEEP_DURATION", duration_secs.to_string())
+        .env("TASKBEEP_SESSION_COUNT", session_count.to_string())
+        .stdin(std::process::Stdio::null())
+        .spawn();
+
+    if let Err(e) = result {
+        eprintln!(
+            "Warning: Failed to execute timer finish script '{}': {}",
+            script_path.display(),
+            e
+        );
+    }
+}
+
 fn try_bind_socket() -> Result<UnixListener> {
     let sock_path = socket_path();
 
@@ -819,6 +851,10 @@ fn run_daemon(topic: String, interval_ms: u64) {
     listener.set_nonblocking(true).expect("set nonblocking");
 
     let state = Arc::new(TimerState::new(now_ms()));
+
+    // Load config once at daemon start
+    let config = get_config();
+    let timer_finish_script = config.on_timer_finish.as_ref().map(PathBuf::from);
 
     // Setup signal handler
     {
@@ -920,6 +956,17 @@ fn run_daemon(topic: String, interval_ms: u64) {
         // Play beep and wait for response
         let beep_time = now_ms();
         play_beep(&audio_stream);
+
+        // Execute timer finish script if configured
+        let duration_secs = interval_ms / MILLIS_PER_SECOND;
+        let current_count = state.completed_count.fetch_add(1, Ordering::AcqRel) + 1;
+        execute_timer_finish_script(
+            timer_finish_script.as_ref(),
+            &topic,
+            duration_secs,
+            current_count,
+        );
+
         if let Ok(mut resp_state) = state.response_state.lock() {
             resp_state.start_waiting();
         }
@@ -946,7 +993,6 @@ fn run_daemon(topic: String, interval_ms: u64) {
                         was_working,
                     };
                     let _ = append_stats(&entry);
-                    state.completed_count.fetch_add(1, Ordering::Release);
                     got_response = true;
                     break;
                 }
@@ -981,7 +1027,6 @@ fn run_daemon(topic: String, interval_ms: u64) {
                 was_working: false,
             };
             let _ = append_stats(&entry);
-            state.completed_count.fetch_add(1, Ordering::Release);
             break;
         }
     }
