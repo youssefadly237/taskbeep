@@ -805,6 +805,11 @@ fn execute_timer_finish_script(
     let topic = topic
         .chars()
         .filter(|c| c.is_ascii_graphic() || *c == ' ')
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
         .take(256)
         .collect::<String>();
 
@@ -813,6 +818,8 @@ fn execute_timer_finish_script(
         .env("TASKBEEP_DURATION", duration_secs.to_string())
         .env("TASKBEEP_SESSION_COUNT", session_count.to_string())
         .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .spawn();
 
     if let Err(e) = result {
