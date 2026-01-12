@@ -891,7 +891,6 @@ fn run_daemon(topic: String, interval_ms: u64) {
 
         // Wait for interval to complete
         let _session_start = Instant::now();
-        let mut early_response = false;
 
         while state.running.load(Ordering::Acquire) {
             let now = now_ms();
@@ -908,29 +907,9 @@ fn run_daemon(topic: String, interval_ms: u64) {
                 continue;
             }
 
-            // Check for early response (before timer completes)
-            // Extract session data before acquiring response_state lock to maintain consistent lock ordering
-            let session_start = session.start_ms;
+            // Check if interval completed
             let target = session.target_time_ms(interval_ms);
             drop(session);
-
-            if let Ok(mut resp_state) = state.response_state.lock()
-                && let Some(was_working) = resp_state.take_response()
-            {
-                drop(resp_state);
-                let entry = StatsEntry {
-                    start_time_ms: session_start,
-                    end_time_ms: now,
-                    topic: topic.clone(),
-                    was_working,
-                };
-                let _ = append_stats(&entry);
-                state.completed_count.fetch_add(1, Ordering::Release);
-                early_response = true;
-                break;
-            }
-
-            // Check if interval completed
 
             if now >= target {
                 break;
@@ -943,10 +922,6 @@ fn run_daemon(topic: String, interval_ms: u64) {
                 let wait_time = Duration::from_millis(remaining);
                 let _ = state.response_condvar.wait_timeout(resp_state, wait_time);
             }
-        }
-
-        if early_response {
-            continue;
         }
 
         if !state.running.load(Ordering::Acquire) {
@@ -1195,9 +1170,22 @@ fn send_signal(is_working: bool) -> Result<()> {
         );
         Ok(())
     } else {
-        Err(TaskBeepError::TimerError(
-            "Timer is not waiting for response".to_string(),
-        ))
+        // Check if timer is even running
+        match get_status() {
+            Ok(status) => {
+                let status_enum = Status::from_u8(status.status).unwrap_or(Status::Running);
+                if status_enum == Status::Waiting {
+                    Err(TaskBeepError::TimerError(
+                        "Failed to record response. Please try again.".to_string(),
+                    ))
+                } else {
+                    Err(TaskBeepError::TimerError(
+                        "Timer is not waiting for response. Wait for the beep.".to_string(),
+                    ))
+                }
+            }
+            Err(_) => Err(TaskBeepError::TimerError("Timer not running".to_string())),
+        }
     }
 }
 
