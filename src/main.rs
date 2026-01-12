@@ -644,7 +644,11 @@ fn socket_handler(listener: UnixListener, state: Arc<TimerState>, topic: String,
 
         let response = match cmd_byte[0] {
             CMD_STOP => {
+                if let Ok(mut resp_state) = state.response_state.lock() {
+                    resp_state.stop_waiting();
+                }
                 state.running.store(false, Ordering::Release);
+                state.response_condvar.notify_all();
                 vec![RESP_OK]
             }
             CMD_PAUSE => {
@@ -1044,29 +1048,34 @@ fn stop_timer(working: bool, wasting: bool) -> Result<()> {
     let status = get_status()?;
     let status_enum = Status::from_u8(status.status).unwrap_or(Status::Running);
 
-    // Calculate partial session if applicable
-    if status_enum != Status::Waiting {
+    let should_log = working || wasting;
+    let is_working = working;
+
+    if should_log {
         let now = now_ms();
-        let elapsed_active = if status_enum == Status::Paused {
-            status
+
+        let (end_time_ms, elapsed_active) = if status_enum == Status::Waiting {
+            let end_time = status.session_start_ms + status.interval_ms + status.total_paused_ms;
+            (end_time, status.interval_ms)
+        } else if status_enum == Status::Paused {
+            let elapsed = status
                 .paused_at_ms
                 .saturating_sub(status.session_start_ms)
-                .saturating_sub(status.total_paused_ms)
+                .saturating_sub(status.total_paused_ms);
+            (status.paused_at_ms, elapsed)
         } else {
-            now.saturating_sub(status.session_start_ms)
-                .saturating_sub(status.total_paused_ms)
+            let elapsed = now
+                .saturating_sub(status.session_start_ms)
+                .saturating_sub(status.total_paused_ms);
+            (now, elapsed)
         };
 
-        if elapsed_active > MILLIS_PER_SECOND && (working || wasting) {
+        if elapsed_active > MILLIS_PER_SECOND {
             let entry = StatsEntry {
                 start_time_ms: status.session_start_ms,
-                end_time_ms: if status_enum == Status::Paused {
-                    status.paused_at_ms
-                } else {
-                    now
-                },
+                end_time_ms,
                 topic: status.topic,
-                was_working: working,
+                was_working: is_working,
             };
             append_stats(&entry)?;
         }
