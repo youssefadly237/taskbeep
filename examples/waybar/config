@@ -1,0 +1,13 @@
+{
+  "custom/pomodoro": {
+    "exec": "~/.config/waybar/scripts/pomodoro.sh",
+    "return-type": "json",
+    "interval": 1,
+    "format": "󰔛 {text}",
+    "escape": false,
+    "tooltip": false,
+    "on-click": "~/.config/waybar/scripts/pomodoro.sh working",
+    "on-click-middle": "~/.config/waybar/scripts/pomodoro.sh toggle",
+    "on-click-right": "~/.config/waybar/scripts/pomodoro.sh wasting"
+  }
+}

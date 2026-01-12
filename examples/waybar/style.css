@@ -1,0 +1,16 @@
+#custom-pomodoro {
+  padding: 0 10px;
+  background-color: #22223b;
+}
+
+#custom-pomodoro.running {
+  color: #38b000;
+}
+
+#custom-pomodoro.paused {
+  color: #ffd60a;
+}
+
+#custom-pomodoro.waiting {
+  color: #ff1744;
+}

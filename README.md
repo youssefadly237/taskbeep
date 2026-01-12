@@ -282,6 +282,38 @@ Scripts run with your user privileges. TaskBeep validates:
 
 Only configure scripts you trust.
 
+#### Example Scripts
+
+The repository includes ready-to-use example scripts in the `examples/on_beep/` directory:
+
+**Interactive Prompts:**
+
+- `rofi_prompt.sh`
+- `fuzzel_prompt.sh`
+- `wofi_prompt.sh`
+- `zenity_prompt.sh`
+
+**Other Examples:**
+
+- `notify_only.sh`
+- `log_session.sh`
+- `motivational_messages.sh`
+
+See the [examples/on_beep directory](examples/on_beep/) for more details and usage instructions.
+
+The `examples/waybar/` directory is available for Waybar integration examples.
+
+Quick setup:
+
+```bash
+# Copy the script you want
+cp examples/on_beep/rofi_prompt.sh ~/.config/taskbeep/timer_finish.sh
+chmod +x ~/.config/taskbeep/timer_finish.sh
+
+# Configure in ~/.config/taskbeep/config.toml
+echo 'on_timer_finish = "~/.config/taskbeep/timer_finish.sh"' >> ~/.config/taskbeep/config.toml
+```
+
 ### Managing Configuration
 
 ```bash
