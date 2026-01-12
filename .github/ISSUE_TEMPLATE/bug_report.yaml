@@ -1,0 +1,45 @@
+name: Bug Report
+description: File a bug report for TaskBeep
+title: "[Bug] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Bug Report
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Describe the bug
+      description: What happened? What did you expect?
+      placeholder: Describe the bug here...
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: How can we reproduce the bug?
+      placeholder: Step-by-step instructions...
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: TaskBeep version and OS
+      description: What version and operating system are you using?
+      placeholder: e.g. TaskBeep 0.1.0, Linux (Arch), Rust 1.75
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs or screenshots
+      description: Paste error messages, logs, or screenshots here.
+      placeholder: Paste logs/screenshots here...
+    validations:
+      required: false
