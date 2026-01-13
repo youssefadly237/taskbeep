@@ -43,6 +43,9 @@ enum Commands {
         topic: String,
         /// Interval in seconds (default from config or 1500s/25 minutes)
         interval: Option<u64>,
+        /// Response timeout in seconds (default from config or 300s, 0 = no timeout)
+        #[arg(long)]
+        response_timeout: Option<u64>,
     },
     /// Stop and end the timer process
     Stop {
@@ -118,7 +121,6 @@ const STATS_FILE_NAME: &str = ".taskbeep.stats";
 const MIN_INTERVAL_SECS: u64 = 1;
 const MAX_INTERVAL_SECS: u64 = SECONDS_PER_DAY; // 24 hours
 const MAX_TOPIC_LEN: usize = 255;
-const RESPONSE_TIMEOUT_MS: u64 = 300_000; // 5 minutes
 const STATS_VERSION: u8 = 1;
 
 static CONFIG: OnceLock<Config> = OnceLock::new();
@@ -850,7 +852,7 @@ fn try_bind_socket() -> Result<UnixListener> {
     Ok(UnixListener::bind(&sock_path)?)
 }
 
-fn run_daemon(topic: String, interval_ms: u64) {
+fn run_daemon(topic: String, interval_ms: u64, response_timeout: Option<u64>) {
     let listener = match try_bind_socket() {
         Ok(l) => l,
         Err(e) => {
@@ -866,6 +868,9 @@ fn run_daemon(topic: String, interval_ms: u64) {
     // Load config once at daemon start
     let config = get_config();
     let timer_finish_script = config.on_timer_finish.as_ref().map(PathBuf::from);
+    let response_timeout_secs = response_timeout
+        .map(|t| if t == 0 { None } else { Some(t) })
+        .unwrap_or(config.response_timeout_secs);
 
     // Setup signal handler
     {
@@ -959,9 +964,10 @@ fn run_daemon(topic: String, interval_ms: u64) {
 
         let wait_start = Instant::now();
         let mut got_response = false;
+        let timeout_ms = response_timeout_secs.map(|s| s * MILLIS_PER_SECOND);
 
         while state.running.load(Ordering::Acquire)
-            && wait_start.elapsed().as_millis() < RESPONSE_TIMEOUT_MS as u128
+            && timeout_ms.is_none_or(|t| wait_start.elapsed().as_millis() < t as u128)
         {
             // Acquire session lock first to extract data, maintaining consistent lock ordering
             let session_start = {
@@ -983,9 +989,9 @@ fn run_daemon(topic: String, interval_ms: u64) {
                     break;
                 }
 
-                // Wait efficiently using condvar
-                let remaining_ms =
-                    RESPONSE_TIMEOUT_MS.saturating_sub(wait_start.elapsed().as_millis() as u64);
+                let remaining_ms = timeout_ms
+                    .map(|t| t.saturating_sub(wait_start.elapsed().as_millis() as u64))
+                    .unwrap_or(MILLIS_PER_SECOND);
                 if remaining_ms > 0 {
                     let wait_time = Duration::from_millis(remaining_ms.min(MILLIS_PER_SECOND));
                     let _ = state.response_condvar.wait_timeout(resp_state, wait_time);
@@ -1021,7 +1027,7 @@ fn run_daemon(topic: String, interval_ms: u64) {
     let _ = fs::remove_file(socket_path());
 }
 
-fn start_timer(topic: String, interval: u64) -> Result<()> {
+fn start_timer(topic: String, interval: u64, response_timeout: Option<u64>) -> Result<()> {
     let topic = validate_topic(&topic)?;
     let interval = validate_interval(interval)?;
     let interval_ms = interval * MILLIS_PER_SECOND;
@@ -1040,7 +1046,7 @@ fn start_timer(topic: String, interval: u64) -> Result<()> {
 
     match daemonize.start() {
         Ok(_) => {
-            run_daemon(topic, interval_ms);
+            run_daemon(topic, interval_ms, response_timeout);
             std::process::exit(0);
         }
         Err(e) => Err(TaskBeepError::TimerError(format!(
@@ -1363,9 +1369,13 @@ fn main() {
     let cli = Cli::parse();
 
     let result = match cli.command {
-        Commands::Start { topic, interval } => {
+        Commands::Start {
+            topic,
+            interval,
+            response_timeout,
+        } => {
             let interval = interval.unwrap_or_else(|| get_config().session_duration);
-            start_timer(topic, interval)
+            start_timer(topic, interval, response_timeout)
         }
         Commands::Stop { working, wasting } => stop_timer(working, wasting),
         Commands::Pause => pause_resume_toggle(CMD_PAUSE, "paused"),

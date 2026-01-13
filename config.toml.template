@@ -25,6 +25,11 @@
 # Pause after beep pattern in seconds
 # pause_duration = 0.7
 
+## Response Timeout
+# Time to wait for user response (working/wasting) after timer finishes (default: 300 seconds)
+# Set to 0 to disable timeout and wait indefinitely
+# response_timeout_secs = 300
+
 ## Script Execution
 # Optional script to run when the timer finishes (after the beep)
 # The script receives these environment variables:

@@ -8,6 +8,7 @@ const DEFAULT_FIRST_BEEP_DURATION: f32 = 0.08;
 const DEFAULT_SECOND_BEEP_DURATION: f32 = 0.12;
 const DEFAULT_GAP_DURATION: f32 = 0.09;
 const DEFAULT_PAUSE_DURATION: f32 = 0.7;
+const DEFAULT_RESPONSE_TIMEOUT_SECS: u64 = 300;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -39,6 +40,13 @@ pub struct Config {
     #[serde(default = "default_pause_duration")]
     pub pause_duration: f32,
 
+    /// Response timeout in seconds (default: 300 / 5 minutes, 0 = no timeout)
+    #[serde(
+        default = "default_response_timeout_secs",
+        deserialize_with = "deserialize_response_timeout"
+    )]
+    pub response_timeout_secs: Option<u64>,
+
     /// Optional script to run when timer finishes (after beep)
     #[serde(default)]
     pub on_timer_finish: Option<String>,
@@ -65,6 +73,17 @@ fn default_gap_duration() -> f32 {
 fn default_pause_duration() -> f32 {
     DEFAULT_PAUSE_DURATION
 }
+fn default_response_timeout_secs() -> Option<u64> {
+    Some(DEFAULT_RESPONSE_TIMEOUT_SECS)
+}
+
+fn deserialize_response_timeout<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let val = Option::<u64>::deserialize(deserializer)?;
+    Ok(val.filter(|&v| v > 0))
+}
 
 impl Default for Config {
     fn default() -> Self {
@@ -76,6 +95,7 @@ impl Default for Config {
             second_beep_duration: default_second_beep_duration(),
             gap_duration: default_gap_duration(),
             pause_duration: default_pause_duration(),
+            response_timeout_secs: default_response_timeout_secs(),
             on_timer_finish: None,
         }
     }
@@ -106,6 +126,11 @@ impl Config {
         }
         if !self.pause_duration.is_finite() || self.pause_duration < 0.0 {
             return Err("pause_duration must be a finite non-negative number".to_string());
+        }
+        if let Some(timeout) = self.response_timeout_secs
+            && timeout > 86400
+        {
+            return Err("response_timeout_secs cannot exceed 86400 seconds (24 hours)".to_string());
         }
 
         // Validate script path
