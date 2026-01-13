@@ -1,0 +1,24 @@
+repos:
+  - repo: local
+    hooks:
+      - id: cargo-test
+        name: cargo test
+        description: Run tests
+        entry: cargo test --all --color always
+        language: system
+        pass_filenames: false
+        files: '\.rs$'
+      - id: rustfmt
+        name: rustfmt
+        description: Check formatting
+        entry: cargo fmt --all -- --check --color always
+        language: system
+        pass_filenames: false
+        files: '\.rs$'
+      - id: clippy
+        name: clippy
+        description: Lint code using Clippy
+        entry: cargo clippy --all --all-targets --color always -- -D warnings
+        language: system
+        pass_filenames: false
+        files: '\.rs$'
