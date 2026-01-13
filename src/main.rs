@@ -121,7 +121,6 @@ const STATS_FILE_NAME: &str = ".taskbeep.stats";
 const MIN_INTERVAL_SECS: u64 = 1;
 const MAX_INTERVAL_SECS: u64 = SECONDS_PER_DAY; // 24 hours
 const MAX_TOPIC_LEN: usize = 255;
-const STATS_VERSION: u8 = 1;
 
 static CONFIG: OnceLock<Config> = OnceLock::new();
 static AUDIO_DATA: OnceLock<Vec<u8>> = OnceLock::new();
@@ -238,6 +237,7 @@ struct StatusResponse {
     status: u8,
     paused_at_ms: u64,
     total_paused_ms: u64,
+    pause_count: u64,
 }
 
 impl StatusResponse {
@@ -253,6 +253,7 @@ impl StatusResponse {
         writer.write_all(&[self.status])?;
         writer.write_all(&self.paused_at_ms.to_le_bytes())?;
         writer.write_all(&self.total_paused_ms.to_le_bytes())?;
+        writer.write_all(&self.pause_count.to_le_bytes())?;
         Ok(())
     }
 
@@ -262,7 +263,7 @@ impl StatusResponse {
         }
 
         let topic_len = bytes[0] as usize;
-        if bytes.len() < 1 + topic_len + 8 * 5 + 1 {
+        if bytes.len() < 1 + topic_len + 8 * 6 + 1 {
             return Err(TaskBeepError::SocketError("Response too short".to_string()));
         }
         let topic = String::from_utf8_lossy(&bytes[1..1 + topic_len]).to_string();
@@ -279,6 +280,8 @@ impl StatusResponse {
         let paused_at_ms = u64::from_le_bytes(bytes[pos..pos + 8].try_into()?);
         pos += 8;
         let total_paused_ms = u64::from_le_bytes(bytes[pos..pos + 8].try_into()?);
+        pos += 8;
+        let pause_count = u64::from_le_bytes(bytes[pos..pos + 8].try_into()?);
 
         Ok(StatusResponse {
             topic,
@@ -288,6 +291,7 @@ impl StatusResponse {
             status,
             paused_at_ms,
             total_paused_ms,
+            pause_count,
         })
     }
 }
@@ -296,6 +300,9 @@ impl StatusResponse {
 struct StatsEntry {
     start_time_ms: u64,
     end_time_ms: u64,
+    duration_ms: u64,
+    pause_count: u64,
+    pause_duration_ms: u64,
     topic: String,
     was_working: bool,
 }
@@ -304,10 +311,12 @@ impl StatsEntry {
     fn write_to<W: Write>(&self, writer: &mut W) -> io::Result<()> {
         writeln!(
             writer,
-            "{}\t{}\t{}\t{}\t{}",
-            STATS_VERSION,
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}",
             self.start_time_ms,
             self.end_time_ms,
+            self.duration_ms,
+            self.pause_count,
+            self.pause_duration_ms,
             self.topic.replace(&['\t', '\n', '\r'][..], " "),
             if self.was_working {
                 "working"
@@ -319,25 +328,45 @@ impl StatsEntry {
 
     fn from_line(line: &str) -> Option<Self> {
         let parts: Vec<&str> = line.split('\t').collect();
-        if parts.len() != 5 {
+        if parts.len() != 7 {
             return None;
         }
 
-        let version: u8 = parts[0].parse().ok()?;
-        if version != STATS_VERSION {
+        let start_time_ms: u64 = parts[0].parse().ok()?;
+        let end_time_ms: u64 = parts[1].parse().ok()?;
+        let duration_ms: u64 = parts[2].parse().ok()?;
+        let pause_count: u64 = parts[3].parse().ok()?;
+        let pause_duration_ms: u64 = parts[4].parse().ok()?;
+        let topic = parts[5].to_string();
+        let was_working = parts[6] == "working";
+
+        // Validation
+        if end_time_ms < start_time_ms {
+            return None;
+        }
+        if duration_ms == 0 || duration_ms > MAX_INTERVAL_SECS * MILLIS_PER_SECOND {
+            return None;
+        }
+        if pause_duration_ms > MAX_INTERVAL_SECS * MILLIS_PER_SECOND {
+            return None;
+        }
+        if topic.is_empty() || topic.len() > MAX_TOPIC_LEN {
             return None;
         }
 
         Some(StatsEntry {
-            start_time_ms: parts[1].parse().ok()?,
-            end_time_ms: parts[2].parse().ok()?,
-            topic: parts[3].to_string(),
-            was_working: parts[4] == "working",
+            start_time_ms,
+            end_time_ms,
+            duration_ms,
+            pause_count,
+            pause_duration_ms,
+            topic,
+            was_working,
         })
     }
 
     fn duration_ms(&self) -> u64 {
-        self.end_time_ms.saturating_sub(self.start_time_ms)
+        self.duration_ms
     }
 }
 
@@ -499,6 +528,7 @@ fn append_stats(entry: &StatsEntry) -> Result<()> {
 struct PauseState {
     paused_at_ms: Option<u64>,
     total_paused_ms: u64,
+    pause_count: u64,
 }
 
 impl PauseState {
@@ -506,6 +536,7 @@ impl PauseState {
         Self {
             paused_at_ms: None,
             total_paused_ms: 0,
+            pause_count: 0,
         }
     }
 
@@ -521,7 +552,9 @@ impl PauseState {
 
     fn resume(&mut self, now: u64) {
         if let Some(paused_at) = self.paused_at_ms {
-            self.total_paused_ms += now.saturating_sub(paused_at);
+            let pause_duration = now.saturating_sub(paused_at);
+            self.total_paused_ms += pause_duration;
+            self.pause_count += 1;
             self.paused_at_ms = None;
         }
     }
@@ -532,6 +565,10 @@ impl PauseState {
 
     fn get_total_paused(&self) -> u64 {
         self.total_paused_ms
+    }
+
+    fn get_pause_count(&self) -> u64 {
+        self.pause_count
     }
 }
 
@@ -735,6 +772,7 @@ fn socket_handler(listener: UnixListener, state: Arc<TimerState>, topic: String,
                     status: status_code.as_u8(),
                     paused_at_ms: session.pause_state.get_paused_at(),
                     total_paused_ms: session.pause_state.get_total_paused(),
+                    pause_count: session.pause_state.get_pause_count(),
                 };
                 drop(session);
 
@@ -970,9 +1008,13 @@ fn run_daemon(topic: String, interval_ms: u64, response_timeout: Option<u64>) {
             && timeout_ms.is_none_or(|t| wait_start.elapsed().as_millis() < t as u128)
         {
             // Acquire session lock first to extract data, maintaining consistent lock ordering
-            let session_start = {
+            let (session_start, pause_count, pause_duration) = {
                 let session = state.session_state.lock().unwrap();
-                session.start_ms
+                (
+                    session.start_ms,
+                    session.pause_state.get_pause_count(),
+                    session.pause_state.get_total_paused(),
+                )
             };
 
             if let Ok(mut resp_state) = state.response_state.lock() {
@@ -981,6 +1023,9 @@ fn run_daemon(topic: String, interval_ms: u64, response_timeout: Option<u64>) {
                     let entry = StatsEntry {
                         start_time_ms: session_start,
                         end_time_ms: beep_time,
+                        duration_ms: interval_ms,
+                        pause_count,
+                        pause_duration_ms: pause_duration,
                         topic: topic.clone(),
                         was_working,
                     };
@@ -1008,13 +1053,20 @@ fn run_daemon(topic: String, interval_ms: u64, response_timeout: Option<u64>) {
         // Timeout: record as wasting and stop
         // Acquire session lock first to maintain consistent lock ordering
         if !got_response && state.running.load(Ordering::Acquire) {
-            let session_start = {
+            let (session_start, pause_count, pause_duration) = {
                 let session = state.session_state.lock().unwrap();
-                session.start_ms
+                (
+                    session.start_ms,
+                    session.pause_state.get_pause_count(),
+                    session.pause_state.get_total_paused(),
+                )
             };
             let entry = StatsEntry {
                 start_time_ms: session_start,
                 end_time_ms: beep_time,
+                duration_ms: interval_ms,
+                pause_count,
+                pause_duration_ms: pause_duration,
                 topic: topic.clone(),
                 was_working: false,
             };
@@ -1075,7 +1127,7 @@ fn stop_timer(working: bool, wasting: bool) -> Result<()> {
                 .paused_at_ms
                 .saturating_sub(status.session_start_ms)
                 .saturating_sub(status.total_paused_ms);
-            (status.paused_at_ms, elapsed)
+            (status.session_start_ms + elapsed, elapsed)
         } else {
             let elapsed = now
                 .saturating_sub(status.session_start_ms)
@@ -1084,9 +1136,19 @@ fn stop_timer(working: bool, wasting: bool) -> Result<()> {
         };
 
         if elapsed_active > MILLIS_PER_SECOND {
+            let pause_duration_ms = if status_enum == Status::Paused {
+                let current_pause = now.saturating_sub(status.paused_at_ms);
+                status.total_paused_ms + current_pause
+            } else {
+                status.total_paused_ms
+            };
+
             let entry = StatsEntry {
                 start_time_ms: status.session_start_ms,
                 end_time_ms,
+                duration_ms: elapsed_active,
+                pause_count: status.pause_count,
+                pause_duration_ms,
                 topic: status.topic,
                 was_working: is_working,
             };
@@ -1257,7 +1319,10 @@ fn show_stats(filter: Option<&str>) -> Result<()> {
 
     let mut total_working_ms = 0u64;
     let mut total_wasting_ms = 0u64;
-    let mut topic_stats: HashMap<String, (u64, u64)> = HashMap::new();
+    let mut total_pause_count = 0u64;
+    let mut total_pause_duration_ms = 0u64;
+    // (working_ms, wasting_ms, pause_count, pause_duration_ms)
+    let mut topic_stats: HashMap<String, (u64, u64, u64, u64)> = HashMap::new();
 
     for line in reader.lines() {
         let line = line?;
@@ -1269,7 +1334,9 @@ fn show_stats(filter: Option<&str>) -> Result<()> {
             }
 
             let duration = entry.duration_ms();
-            let stats = topic_stats.entry(entry.topic.clone()).or_insert((0, 0));
+            let stats = topic_stats
+                .entry(entry.topic.clone())
+                .or_insert((0, 0, 0, 0));
 
             if entry.was_working {
                 total_working_ms += duration;
@@ -1278,6 +1345,11 @@ fn show_stats(filter: Option<&str>) -> Result<()> {
                 total_wasting_ms += duration;
                 stats.1 += duration;
             }
+
+            total_pause_count += entry.pause_count;
+            total_pause_duration_ms += entry.pause_duration_ms;
+            stats.2 += entry.pause_count;
+            stats.3 += entry.pause_duration_ms;
         }
     }
 
@@ -1302,20 +1374,38 @@ fn show_stats(filter: Option<&str>) -> Result<()> {
     println!("Working: {}", DurationDisplay(total_working_ms));
     println!("Wasting: {}", DurationDisplay(total_wasting_ms));
     println!("Productivity: {:.1}%", productivity);
+    if total_pause_count > 0 {
+        println!(
+            "Total pauses: {} ({} paused)",
+            total_pause_count,
+            DurationDisplay(total_pause_duration_ms)
+        );
+    }
 
     println!("\n=== By Topic ===");
     let mut topics: Vec<_> = topic_stats.iter().collect();
-    topics.sort_by_key(|(_, (w, wa))| std::cmp::Reverse(w + wa));
+    topics.sort_by_key(|(_, (w, wa, _, _))| std::cmp::Reverse(w + wa));
 
-    for (topic, (working, wasting)) in topics {
+    for (topic, (working, wasting, pause_count, pause_duration)) in topics {
         let total = working + wasting;
         let prod = (*working as f64 / total as f64) * 100.0;
-        println!(
-            "{}: {} ({:.1}% productive)",
-            topic,
-            DurationDisplay(total),
-            prod
-        );
+        if *pause_count > 0 {
+            println!(
+                "{}: {} ({:.1}% productive, {} pauses, {} paused)",
+                topic,
+                DurationDisplay(total),
+                prod,
+                pause_count,
+                DurationDisplay(*pause_duration)
+            );
+        } else {
+            println!(
+                "{}: {} ({:.1}% productive)",
+                topic,
+                DurationDisplay(total),
+                prod
+            );
+        }
     }
 
     Ok(())
@@ -1567,6 +1657,9 @@ mod tests {
         let entry = StatsEntry {
             start_time_ms: 1000,
             end_time_ms: 2000,
+            duration_ms: 1000,
+            pause_count: 2,
+            pause_duration_ms: 300,
             topic: "test".to_string(),
             was_working: true,
         };
@@ -1580,15 +1673,18 @@ mod tests {
         let deserialized = StatsEntry::from_line(serialized.trim()).unwrap();
         assert_eq!(deserialized.start_time_ms, entry.start_time_ms);
         assert_eq!(deserialized.end_time_ms, entry.end_time_ms);
+        assert_eq!(deserialized.duration_ms, entry.duration_ms);
+        assert_eq!(deserialized.pause_count, entry.pause_count);
+        assert_eq!(deserialized.pause_duration_ms, entry.pause_duration_ms);
         assert_eq!(deserialized.topic, entry.topic);
         assert_eq!(deserialized.was_working, entry.was_working);
     }
 
     #[test]
     fn test_stats_entry_deserialization_invalid() {
-        assert!(StatsEntry::from_line("1\t1000\t2000").is_none());
-        assert!(StatsEntry::from_line("99\t1000\t2000\ttopic\tworking").is_none());
-        assert!(StatsEntry::from_line("1\tabc\t2000\ttopic\tworking").is_none());
+        assert!(StatsEntry::from_line("1000\t2000\t1000").is_none());
+        assert!(StatsEntry::from_line("1000\t2000\t1000\t2\t300\ttopic\textra\tworking").is_none());
+        assert!(StatsEntry::from_line("abc\t2000\t1000\t2\t300\ttopic\tworking").is_none());
     }
 
     #[test]
@@ -1596,6 +1692,9 @@ mod tests {
         let entry = StatsEntry {
             start_time_ms: 1000,
             end_time_ms: 3500,
+            duration_ms: 2500,
+            pause_count: 1,
+            pause_duration_ms: 500,
             topic: "test".to_string(),
             was_working: true,
         };
@@ -1612,6 +1711,7 @@ mod tests {
             status: Status::Running.as_u8(),
             paused_at_ms: 0,
             total_paused_ms: 0,
+            pause_count: 3,
         };
 
         let mut buf = Vec::new();
@@ -1623,6 +1723,7 @@ mod tests {
         assert_eq!(deserialized.session_start_ms, response.session_start_ms);
         assert_eq!(deserialized.interval_ms, response.interval_ms);
         assert_eq!(deserialized.status, response.status);
+        assert_eq!(deserialized.pause_count, response.pause_count);
     }
 
     #[test]
@@ -1637,21 +1738,24 @@ mod tests {
             StatsEntry {
                 start_time_ms: 0,
                 end_time_ms: 60_000,
+                duration_ms: 60_000,
+                pause_count: 0,
+                pause_duration_ms: 0,
                 topic: "task1".to_string(),
                 was_working: true,
             },
             StatsEntry {
                 start_time_ms: 60_000,
                 end_time_ms: 120_000,
+                duration_ms: 60_000,
+                pause_count: 1,
+                pause_duration_ms: 5000,
                 topic: "task2".to_string(),
                 was_working: true,
             },
         ];
 
-        let total = entries
-            .iter()
-            .map(|e| e.end_time_ms - e.start_time_ms)
-            .sum::<u64>();
+        let total = entries.iter().map(|e| e.duration_ms()).sum::<u64>();
         assert_eq!(total, 120_000);
     }
 
@@ -1665,18 +1769,27 @@ mod tests {
             StatsEntry {
                 start_time_ms: two_days_ago,
                 end_time_ms: two_days_ago + 1000,
+                duration_ms: 1000,
+                pause_count: 0,
+                pause_duration_ms: 0,
                 topic: "old".to_string(),
                 was_working: true,
             },
             StatsEntry {
                 start_time_ms: one_day_ago,
                 end_time_ms: one_day_ago + 1000,
+                duration_ms: 1000,
+                pause_count: 1,
+                pause_duration_ms: 200,
                 topic: "recent".to_string(),
                 was_working: true,
             },
             StatsEntry {
                 start_time_ms: now - 1000,
                 end_time_ms: now,
+                duration_ms: 1000,
+                pause_count: 0,
+                pause_duration_ms: 0,
                 topic: "current".to_string(),
                 was_working: true,
             },
