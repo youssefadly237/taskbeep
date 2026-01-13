@@ -93,8 +93,10 @@ enum Commands {
         #[arg(default_value = "taskbeep_stats.tsv")]
         output: PathBuf,
     },
-    /// Clear all stored statistics (requires confirmation)
+    /// Clear statistics (all or for a specific topic)
     Clear {
+        /// Optional topic to delete (if omitted, deletes all statistics)
+        topic: Option<String>,
         /// Skip confirmation prompt
         #[arg(short, long)]
         yes: bool,
@@ -1424,7 +1426,15 @@ fn export_stats(output: PathBuf) -> Result<()> {
     Ok(())
 }
 
-fn clear_stats(skip_confirmation: bool) -> Result<()> {
+fn confirm(prompt: &str) -> Result<bool> {
+    print!("{}", prompt);
+    io::stdout().flush()?;
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    Ok(matches!(input.trim().to_lowercase().as_str(), "y" | "yes"))
+}
+
+fn clear_stats(topic: Option<String>, skip_confirmation: bool) -> Result<()> {
     if get_status().is_ok() {
         return Err(TaskBeepError::StatsError(
             "Cannot clear statistics while timer is running".to_string(),
@@ -1437,21 +1447,131 @@ fn clear_stats(skip_confirmation: bool) -> Result<()> {
         return Ok(());
     }
 
-    if !skip_confirmation {
-        print!("Delete all statistics? This cannot be undone. (y/N): ");
-        io::stdout().flush()?;
+    if let Some(topic_name) = topic {
+        let file = File::open(&stats_path)?;
+        let reader = BufReader::new(file);
 
-        let mut input = String::new();
-        io::stdin().read_line(&mut input)?;
+        let mut matching_entries = Vec::new();
+        let mut other_entries = Vec::new();
+        let mut all_topics = std::collections::HashSet::new();
 
-        if !matches!(input.trim().to_lowercase().as_str(), "y" | "yes") {
-            println!("Cancelled");
+        for line in reader.lines() {
+            let line = line?;
+            if let Some(entry) = StatsEntry::from_line(&line) {
+                all_topics.insert(entry.topic.clone());
+                if entry.topic == topic_name {
+                    matching_entries.push(entry);
+                } else {
+                    other_entries.push(entry);
+                }
+            }
+        }
+
+        if matching_entries.is_empty() {
+            let topic_lower = topic_name.to_lowercase();
+
+            let exact_case_insensitive: Vec<_> = all_topics
+                .iter()
+                .filter(|t| t.to_lowercase() == topic_lower)
+                .collect();
+
+            if !exact_case_insensitive.is_empty() {
+                println!(
+                    "No exact match found for '{}'. Did you mean one of these (case-sensitive)?",
+                    topic_name
+                );
+                for t in exact_case_insensitive {
+                    println!("  {}", t);
+                }
+                return Ok(());
+            }
+
+            let partial_matches: Vec<_> = all_topics
+                .iter()
+                .filter(|t| t.to_lowercase().contains(&topic_lower))
+                .collect();
+
+            if !partial_matches.is_empty() {
+                println!(
+                    "No exact match found for '{}'. Did you mean one of these?",
+                    topic_name
+                );
+                for t in partial_matches {
+                    println!("  {}", t);
+                }
+                return Ok(());
+            }
+
+            println!("No statistics found for topic: '{}'", topic_name);
+            if !all_topics.is_empty() {
+                println!("\nAvailable topics:");
+                let mut sorted_topics: Vec<_> = all_topics.iter().collect();
+                sorted_topics.sort();
+                for t in sorted_topics {
+                    println!("  {}", t);
+                }
+            }
             return Ok(());
         }
+
+        if !skip_confirmation {
+            println!(
+                "Found {} session(s) for topic: {}",
+                matching_entries.len(),
+                topic_name
+            );
+            if !confirm("Delete all statistics for this topic? This cannot be undone. (y/N): ")? {
+                println!("Cancelled");
+                return Ok(());
+            }
+        }
+
+        let temp_path = stats_path.with_extension("tmp");
+        let write_result = {
+            let temp_file = OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(&temp_path)?;
+
+            let mut writer = io::BufWriter::new(temp_file);
+            for entry in &other_entries {
+                entry.write_to(&mut writer)?;
+            }
+            writer.flush()?;
+            writer.get_ref().sync_data()?;
+            Ok::<(), io::Error>(())
+        };
+
+        if let Err(e) = write_result {
+            let _ = fs::remove_file(&temp_path);
+            return Err(e.into());
+        }
+
+        if let Err(e) = fs::rename(&temp_path, &stats_path) {
+            let _ = fs::remove_file(&temp_path);
+            return Err(e.into());
+        }
+
+        println!(
+            "Deleted {} session(s) for topic: {}",
+            matching_entries.len(),
+            topic_name
+        );
+    } else {
+        if !skip_confirmation {
+            let confirmed = confirm("Delete all statistics? This cannot be undone. (y/N): ")?;
+            if !confirmed {
+                println!("Cancelled");
+                return Ok(());
+            }
+        }
+
+        fs::remove_file(&stats_path)?;
+        println!("Statistics cleared");
     }
 
-    fs::remove_file(&stats_path)?;
-    println!("Statistics cleared");
     Ok(())
 }
 
@@ -1500,7 +1620,7 @@ fn main() {
             show_stats(filter)
         }
         Commands::Export { output } => export_stats(output),
-        Commands::Clear { yes } => clear_stats(yes),
+        Commands::Clear { topic, yes } => clear_stats(topic, yes),
         Commands::Config { path, reset } => {
             if reset {
                 match Config::reset() {
