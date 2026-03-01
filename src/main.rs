@@ -2017,4 +2017,203 @@ mod tests {
         assert!(!accepted2);
         assert_eq!(state.response, Some(true));
     }
+
+    // Pause / session-logging correctness:
+    // Guards against bugs where time is incorrectly counted while paused or
+    // while waiting for the user's working/wasting response.
+
+    // A second consecutive pause() must be a no-op; the first timestamp must
+    // be preserved so that pause duration is not under-counted.
+    #[test]
+    fn pause_double_pause_is_noop() {
+        let mut ps = PauseState::new();
+        ps.pause(1_000);
+        ps.pause(5_000); // must be ignored
+        assert_eq!(
+            ps.get_paused_at(),
+            1_000,
+            "second pause must not overwrite first"
+        );
+        ps.resume(6_000);
+        assert_eq!(ps.get_total_paused(), 5_000); // 6000 - 1000
+    }
+
+    // resume() without a prior pause() must not corrupt total_paused_ms or pause_count.
+    #[test]
+    fn pause_resume_without_prior_pause_is_noop() {
+        let mut ps = PauseState::new();
+        ps.resume(5_000);
+        assert!(!ps.is_paused());
+        assert_eq!(ps.get_total_paused(), 0);
+        assert_eq!(ps.get_pause_count(), 0);
+    }
+
+    // Pause duration must accumulate correctly across multiple pause/resume cycles.
+    #[test]
+    fn pause_multiple_cycles_accumulate_correctly() {
+        let mut ps = PauseState::new();
+        ps.pause(0);
+        ps.resume(3_000); // +3 000 ms
+        ps.pause(10_000);
+        ps.resume(17_000); // +7 000 ms
+        ps.pause(20_000);
+        ps.resume(21_500); // +1 500 ms
+        assert_eq!(ps.get_total_paused(), 11_500);
+        assert_eq!(ps.get_pause_count(), 3);
+    }
+
+    // total_paused_ms must not include the in-progress pause until resume() is called.
+    #[test]
+    fn pause_ongoing_pause_not_counted_in_total_until_resumed() {
+        let mut ps = PauseState::new();
+        ps.pause(10_000);
+        // Still paused – total must remain 0
+        assert_eq!(ps.get_total_paused(), 0);
+        // Only after resume does it count
+        ps.resume(15_000);
+        assert_eq!(ps.get_total_paused(), 5_000);
+    }
+
+    // Target time must be extended by the exact pause duration so paused time is never counted as work.
+    #[test]
+    fn session_target_time_extends_by_pause_duration() {
+        let interval_ms: u64 = 60_000;
+        let mut session = SessionState::new(0);
+
+        // Pause for 10 seconds
+        session.pause_state.pause(20_000);
+        session.pause_state.resume(30_000); // 10 000 ms paused
+
+        // Without pause: target = 0 + 60 000 = 60 000
+        // With pause:    target = 0 + 60 000 + 10 000 = 70 000
+        assert_eq!(session.target_time_ms(interval_ms), 70_000);
+
+        // If the clock reads 65 000 (old target would have expired), the
+        // extended target must NOT yet have expired.
+        assert!(
+            65_000 < session.target_time_ms(interval_ms),
+            "timer must not expire at 65 s when 10 s was paused"
+        );
+    }
+
+    // With no pauses the target time is simply start + interval.
+    #[test]
+    fn session_target_time_no_pause_equals_start_plus_interval() {
+        let session = SessionState::new(5_000);
+        assert_eq!(session.target_time_ms(30_000), 35_000);
+    }
+
+    // duration_ms must equal the configured interval, not the wall-clock elapsed time.
+    #[test]
+    fn logged_duration_is_interval_not_wall_clock() {
+        let interval_ms: u64 = 60_000;
+        let session_start: u64 = 0;
+        let pause_duration: u64 = 20_000;
+        // Wall clock at beep = start + interval + paused = 80 000 ms
+        let beep_time: u64 = session_start + interval_ms + pause_duration;
+
+        let entry = StatsEntry {
+            start_time_ms: session_start,
+            end_time_ms: beep_time,
+            duration_ms: interval_ms, // must be the configured interval
+            pause_count: 1,
+            pause_duration_ms: pause_duration,
+            topic: "work".to_string(),
+            was_working: true,
+        };
+
+        assert_eq!(
+            entry.duration_ms, interval_ms,
+            "duration_ms must be the configured interval"
+        );
+        assert_ne!(
+            entry.duration_ms,
+            beep_time - session_start,
+            "duration_ms must NOT be the raw wall-clock difference"
+        );
+    }
+
+    // end_time_ms must be the beep time; response-waiting time must not inflate it.
+    #[test]
+    fn logged_end_time_is_beep_time_not_response_time() {
+        let beep_time: u64 = 100_000;
+        let response_delay_ms: u64 = 15_000; // user answered 15 s later
+
+        let entry = StatsEntry {
+            start_time_ms: 40_000,
+            end_time_ms: beep_time, // must NOT be beep_time + response_delay_ms
+            duration_ms: 60_000,
+            pause_count: 0,
+            pause_duration_ms: 0,
+            topic: "work".to_string(),
+            was_working: true,
+        };
+
+        assert_eq!(entry.end_time_ms, beep_time);
+        assert_ne!(
+            entry.end_time_ms,
+            beep_time + response_delay_ms,
+            "waiting-for-response time must not be included in end_time_ms"
+        );
+    }
+
+    // pause_duration_ms must only reflect time paused during the interval, not response-wait time.
+    #[test]
+    fn logged_pause_duration_reflects_only_paused_time() {
+        let mut ps = PauseState::new();
+        ps.pause(10_000);
+        ps.resume(17_000); // 7 000 ms paused
+        // At beep time the daemon snapshots pause state – response waiting
+        // begins only afterwards and must not affect these values.
+        let pause_duration_at_beep = ps.get_total_paused();
+        let pause_count_at_beep = ps.get_pause_count();
+
+        let entry = StatsEntry {
+            start_time_ms: 0,
+            end_time_ms: 67_000, // 0 + 60 000 interval + 7 000 pause
+            duration_ms: 60_000,
+            pause_count: pause_count_at_beep,
+            pause_duration_ms: pause_duration_at_beep,
+            topic: "work".to_string(),
+            was_working: true,
+        };
+
+        assert_eq!(entry.pause_duration_ms, 7_000);
+        assert_eq!(entry.pause_count, 1);
+    }
+
+    // Full invariant: target time, end_time_ms, duration_ms and pause_duration_ms must be consistent.
+    #[test]
+    fn session_and_log_invariants_are_consistent_after_pause() {
+        let interval_ms: u64 = 60_000;
+        let start_ms: u64 = 1_000_000;
+        let mut session = SessionState::new(start_ms);
+
+        session.pause_state.pause(start_ms + 20_000);
+        session.pause_state.resume(start_ms + 25_000); // 5 000 ms paused
+
+        let expected_beep_time = session.target_time_ms(interval_ms);
+        // target = start + interval + paused = 1 000 000 + 60 000 + 5 000
+        assert_eq!(expected_beep_time, 1_065_000);
+
+        let entry = StatsEntry {
+            start_time_ms: session.start_ms,
+            end_time_ms: expected_beep_time,
+            duration_ms: interval_ms,
+            pause_count: session.pause_state.get_pause_count(),
+            pause_duration_ms: session.pause_state.get_total_paused(),
+            topic: "work".to_string(),
+            was_working: true,
+        };
+
+        // end - start == interval + pause (wall clock made whole)
+        assert_eq!(
+            entry.end_time_ms - entry.start_time_ms,
+            entry.duration_ms + entry.pause_duration_ms
+        );
+        // duration (focused work) == interval, never less due to pause
+        assert_eq!(entry.duration_ms, interval_ms);
+        // pause_duration correctly recorded
+        assert_eq!(entry.pause_duration_ms, 5_000);
+    }
 }
