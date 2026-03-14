@@ -73,6 +73,9 @@ impl PauseState {
 
 pub struct SessionState {
     pub start_ms: u64,
+    start_instant: Instant,
+    paused_at_instant: Option<Instant>,
+    total_paused_duration: Duration,
     pub pause_state: PauseState,
 }
 
@@ -80,12 +83,34 @@ impl SessionState {
     pub fn new(start_ms: u64) -> Self {
         Self {
             start_ms,
+            start_instant: Instant::now(),
+            paused_at_instant: None,
+            total_paused_duration: Duration::ZERO,
             pause_state: PauseState::new(),
         }
     }
 
+    pub fn pause(&mut self, now_ms: u64, now_instant: Instant) {
+        if self.paused_at_instant.is_none() {
+            self.paused_at_instant = Some(now_instant);
+        }
+        self.pause_state.pause(now_ms);
+    }
+
+    pub fn resume(&mut self, now_ms: u64, now_instant: Instant) {
+        if let Some(paused_at) = self.paused_at_instant.take() {
+            self.total_paused_duration += now_instant.saturating_duration_since(paused_at);
+        }
+        self.pause_state.resume(now_ms);
+    }
+
+    #[cfg(test)]
     pub fn target_time_ms(&self, interval_ms: u64) -> u64 {
         self.start_ms + interval_ms + self.pause_state.total_paused_ms
+    }
+
+    pub fn target_instant(&self, interval_ms: u64) -> Instant {
+        self.start_instant + Duration::from_millis(interval_ms) + self.total_paused_duration
     }
 }
 
@@ -193,7 +218,7 @@ fn socket_handler(listener: UnixListener, state: Arc<TimerState>, topic: String,
                         if resp.is_waiting() {
                             vec![RESP_ERROR]
                         } else {
-                            session.pause_state.pause(now_ms());
+                            session.pause(now_ms(), Instant::now());
                             resp.notify_pause_change();
                             drop(resp);
                             drop(session);
@@ -210,7 +235,7 @@ fn socket_handler(listener: UnixListener, state: Arc<TimerState>, topic: String,
             CMD_RESUME => {
                 if let Ok(mut session) = state.session_state.lock() {
                     if let Ok(mut resp) = state.response_state.lock() {
-                        session.pause_state.resume(now_ms());
+                        session.resume(now_ms(), Instant::now());
                         resp.notify_pause_change();
                         drop(resp);
                         drop(session);
@@ -229,11 +254,12 @@ fn socket_handler(listener: UnixListener, state: Arc<TimerState>, topic: String,
                         if resp.is_waiting() {
                             vec![RESP_ERROR]
                         } else {
-                            let now = now_ms();
+                            let now_ms = now_ms();
+                            let now_instant = Instant::now();
                             if session.pause_state.is_paused() {
-                                session.pause_state.resume(now);
+                                session.resume(now_ms, now_instant);
                             } else {
-                                session.pause_state.pause(now);
+                                session.pause(now_ms, now_instant);
                             }
                             resp.notify_pause_change();
                             drop(resp);
@@ -443,7 +469,7 @@ pub fn run_daemon(topic: String, interval_ms: u64, response_timeout: Option<u64>
         let _session_start = Instant::now();
 
         while state.running.load(Ordering::Acquire) {
-            let now = now_ms();
+            let now = Instant::now();
             let session = state.session_state.lock().unwrap();
 
             if session.pause_state.is_paused() {
@@ -455,7 +481,7 @@ pub fn run_daemon(topic: String, interval_ms: u64, response_timeout: Option<u64>
                 continue;
             }
 
-            let target = session.target_time_ms(interval_ms);
+            let target = session.target_instant(interval_ms);
             drop(session);
 
             if now >= target {
@@ -463,8 +489,7 @@ pub fn run_daemon(topic: String, interval_ms: u64, response_timeout: Option<u64>
             }
 
             if let Ok(resp_state) = state.response_state.lock() {
-                let remaining = target.saturating_sub(now);
-                let wait_time = Duration::from_millis(remaining);
+                let wait_time = target.saturating_duration_since(now);
                 let _ = state.response_condvar.wait_timeout(resp_state, wait_time);
             }
         }
@@ -833,5 +858,44 @@ mod tests {
         );
         assert_eq!(entry.duration_ms, interval_ms);
         assert_eq!(entry.pause_duration_ms, 5_000);
+    }
+
+    // Monotonic target must be extended by exactly the measured pause duration.
+    #[test]
+    fn monotonic_target_extends_by_pause_duration() {
+        let interval_ms: u64 = 60_000;
+        let mut session = SessionState::new(0);
+
+        let base_target = session.target_instant(interval_ms);
+        let pause_at = Instant::now();
+
+        session.pause(10_000, pause_at);
+        session.resume(15_000, pause_at + Duration::from_secs(5));
+
+        let extended_target = session.target_instant(interval_ms);
+        assert_eq!(
+            extended_target.duration_since(base_target),
+            Duration::from_secs(5)
+        );
+    }
+
+    // Monotonic scheduling must depend on monotonic elapsed time, not wall-clock jumps.
+    #[test]
+    fn monotonic_target_ignores_wall_clock_jump() {
+        let interval_ms: u64 = 60_000;
+        let mut session = SessionState::new(0);
+
+        let base_target = session.target_instant(interval_ms);
+        let pause_at = Instant::now();
+
+        // Simulate a large wall-clock jump while only 1 second of monotonic time elapsed.
+        session.pause(1_000, pause_at);
+        session.resume(3_600_000, pause_at + Duration::from_secs(1));
+
+        let extended_target = session.target_instant(interval_ms);
+        assert_eq!(
+            extended_target.duration_since(base_target),
+            Duration::from_secs(1)
+        );
     }
 }
