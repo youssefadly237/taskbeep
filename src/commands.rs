@@ -28,7 +28,7 @@ pub fn stop_timer(working: bool, wasting: bool) -> Result<()> {
                 .paused_at_ms
                 .saturating_sub(status.session_start_ms)
                 .saturating_sub(status.total_paused_ms);
-            (status.session_start_ms + elapsed, elapsed)
+            (now, elapsed)
         } else {
             let elapsed = now
                 .saturating_sub(status.session_start_ms)
@@ -80,10 +80,10 @@ pub fn show_status(format: &str) -> Result<()> {
         Status::Running => "running",
     };
 
+    let target = status.session_start_ms + status.interval_ms + status.total_paused_ms;
     let remaining = if status_enum == Status::Paused {
-        status.session_start_ms + status.interval_ms + status.total_paused_ms - status.paused_at_ms
+        target.saturating_sub(status.paused_at_ms)
     } else {
-        let target = status.session_start_ms + status.interval_ms + status.total_paused_ms;
         target.saturating_sub(now)
     };
 
@@ -171,15 +171,15 @@ pub fn send_signal(is_working: bool) -> Result<()> {
     }
 }
 
-pub fn pause_resume_toggle(cmd: u8, action: &str) -> Result<()> {
+pub fn pause_resume_toggle(cmd: u8, success_action: &str, error_verb: &str) -> Result<()> {
     let response = send_command(cmd)?;
     if response.first() == Some(&RESP_OK) {
-        println!("Timer {}", action);
+        println!("Timer {}", success_action);
         Ok(())
     } else {
         Err(TaskBeepError::TimerError(format!(
             "Failed to {} timer",
-            action
+            error_verb
         )))
     }
 }

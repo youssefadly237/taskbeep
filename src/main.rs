@@ -140,13 +140,13 @@ fn main() {
             start_timer(topic, interval, response_timeout)
         }
         Commands::Stop { working, wasting } => stop_timer(working, wasting),
-        Commands::Pause => pause_resume_toggle(CMD_PAUSE, "paused"),
-        Commands::Resume => pause_resume_toggle(CMD_RESUME, "resumed"),
+        Commands::Pause => pause_resume_toggle(CMD_PAUSE, "paused", "pause"),
+        Commands::Resume => pause_resume_toggle(CMD_RESUME, "resumed", "resume"),
         Commands::Toggle => match get_status() {
             Ok(status) if Status::from_u8(status.status) == Some(Status::Paused) => {
-                pause_resume_toggle(CMD_TOGGLE, "resumed")
+                pause_resume_toggle(CMD_TOGGLE, "resumed", "resume")
             }
-            Ok(_) => pause_resume_toggle(CMD_TOGGLE, "paused"),
+            Ok(_) => pause_resume_toggle(CMD_TOGGLE, "paused", "pause"),
             Err(e) => Err(e),
         },
         Commands::Status { format } => show_status(&format),

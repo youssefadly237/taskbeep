@@ -174,3 +174,70 @@ fn toggle_is_rejected_while_waiting() {
     env.run_ok(&["working"]);
     env.run_ok(&["stop"]);
 }
+
+#[test]
+fn stop_while_paused_logs_consistent_timing_fields() {
+    let env = TestEnv::new();
+
+    env.run_ok(&[
+        "start",
+        "paused-stop-invariant",
+        "10",
+        "--response-timeout",
+        "20",
+    ]);
+    assert!(
+        env.wait_for_status("running", Duration::from_secs(3)),
+        "timer never reached running status"
+    );
+
+    thread::sleep(Duration::from_millis(1200));
+
+    env.run_ok(&["pause"]);
+    assert!(
+        env.wait_for_status("paused", Duration::from_secs(3)),
+        "timer never reached paused status"
+    );
+
+    // Keep timer paused long enough so in-progress pause must be included.
+    thread::sleep(Duration::from_millis(1500));
+
+    env.run_ok(&["stop", "--working"]);
+
+    assert!(env.stats_path.exists(), "stats file was not created");
+
+    let stats = fs::read_to_string(&env.stats_path).expect("failed to read stats file");
+    let first_line = stats
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .expect("stats file has no entries");
+
+    let fields: Vec<&str> = first_line.split('\t').collect();
+    assert_eq!(
+        fields.len(),
+        7,
+        "stats entry has unexpected field count: {} ({})",
+        fields.len(),
+        first_line
+    );
+
+    let start_ms: u64 = fields[0].parse().expect("invalid start_time_ms");
+    let end_ms: u64 = fields[1].parse().expect("invalid end_time_ms");
+    let active_ms: u64 = fields[2].parse().expect("invalid duration_ms");
+    let pause_ms: u64 = fields[4].parse().expect("invalid pause_duration_ms");
+
+    assert!(end_ms >= start_ms, "end_time_ms must be >= start_time_ms");
+    assert!(
+        active_ms >= 1000,
+        "active duration should exceed logging threshold"
+    );
+    assert!(
+        pause_ms >= 1000,
+        "pause duration should include in-progress paused time"
+    );
+    assert_eq!(
+        end_ms.saturating_sub(start_ms),
+        active_ms.saturating_add(pause_ms),
+        "wall-clock elapsed should equal active + paused durations"
+    );
+}

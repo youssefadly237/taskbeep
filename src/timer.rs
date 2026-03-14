@@ -411,8 +411,10 @@ pub fn run_daemon(topic: String, interval_ms: u64, response_timeout: Option<u64>
 
     {
         let running = state.running.clone();
+        let response_condvar = state.response_condvar.clone();
         let _ = ctrlc::set_handler(move || {
             running.store(false, Ordering::Release);
+            response_condvar.notify_all();
         });
     }
 
