@@ -10,7 +10,11 @@ use crate::protocol::{
 use crate::stats::{StatsEntry, append_stats};
 use crate::utils::{DurationDisplay, MILLIS_PER_SECOND, now_ms};
 
-pub fn stop_timer(working: bool, wasting: bool) -> Result<()> {
+/// Stop the active timer session.
+///
+/// Set `quiet = true` when called from the TUI so that no text is written to
+/// stdout (the terminal belongs to the TUI renderer in that case).
+pub fn stop_timer(working: bool, wasting: bool, quiet: bool) -> Result<()> {
     let status = get_status()?;
     let status_enum = Status::from_u8(status.status).unwrap_or(Status::Running);
 
@@ -59,7 +63,9 @@ pub fn stop_timer(working: bool, wasting: bool) -> Result<()> {
 
     let response = send_command(CMD_STOP)?;
     if response.first() == Some(&RESP_OK) {
-        println!("Timer stopped");
+        if !quiet {
+            println!("Timer stopped");
+        }
         thread::sleep(Duration::from_millis(100));
         Ok(())
     } else {
@@ -171,10 +177,17 @@ pub fn send_signal(is_working: bool) -> Result<()> {
     }
 }
 
-pub fn pause_resume_toggle(cmd: u8, success_action: &str, error_verb: &str) -> Result<()> {
+fn pause_resume_toggle_impl(
+    cmd: u8,
+    success_action: &str,
+    error_verb: &str,
+    quiet: bool,
+) -> Result<()> {
     let response = send_command(cmd)?;
     if response.first() == Some(&RESP_OK) {
-        println!("Timer {}", success_action);
+        if !quiet {
+            println!("Timer {}", success_action);
+        }
         Ok(())
     } else {
         Err(TaskBeepError::TimerError(format!(
@@ -182,4 +195,13 @@ pub fn pause_resume_toggle(cmd: u8, success_action: &str, error_verb: &str) -> R
             error_verb
         )))
     }
+}
+
+pub fn pause_resume_toggle(cmd: u8, success_action: &str, error_verb: &str) -> Result<()> {
+    pause_resume_toggle_impl(cmd, success_action, error_verb, false)
+}
+
+#[cfg(feature = "ui")]
+pub fn pause_resume_toggle_quiet(cmd: u8, success_action: &str, error_verb: &str) -> Result<()> {
+    pause_resume_toggle_impl(cmd, success_action, error_verb, true)
 }

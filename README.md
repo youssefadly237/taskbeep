@@ -88,6 +88,33 @@ Shows:
 taskbeep stop
 ```
 
+### Interactive Terminal UI
+
+TaskBeep includes an optional interactive terminal user interface (TUI) powered
+by `ratatui` and `crossterm`. The TUI is feature-gated behind the `ui` Cargo
+feature and must be built with that feature enabled.
+
+![taskbeep TUI](./images/image.png)
+
+Basic usage:
+
+```bash
+# Launch the TUI (requires a build with the `ui` feature enabled)
+taskbeep ui
+```
+
+Common keys inside the TUI (highlighted):
+
+- `q` / `Esc`: quit the UI
+- Arrow keys to navigate the heatmap
+- `f`: open topic filter input
+- `r`: open range input
+- `s`: start a new timer
+- `t`: pause/resume toggle
+- `+` / `-`: adjust pending interval when timer not running
+
+See the `examples/` scripts for sample on-beep integrations used with the UI.
+
 ## Integration with Waybar
 
 You can integrate this with Waybar to create a visual Pomodoro timer. Here's an
@@ -332,6 +359,20 @@ cat $(taskbeep config --path)
 ```bash
 cargo install taskbeep
 ```
+
+Optional: Install with the interactive TUI enabled
+
+```bash
+cargo install taskbeep --features ui
+```
+
+Notes:
+
+- The TUI is compiled only when the `ui` Cargo feature is enabled. If you run
+  `taskbeep ui` on a build without the `ui` feature, the binary will print an error
+  telling you how to rebuild with UI support.
+- Building with `--features ui` pulls in terminal UI crates (`ratatui`, `crossterm`)
+  but does not require additional system packages.
 
 ## Building
 

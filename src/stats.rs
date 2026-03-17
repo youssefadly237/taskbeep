@@ -4,15 +4,21 @@ use std::{
     io::{self, BufRead, BufReader, Write},
     os::unix::fs::OpenOptionsExt,
     path::PathBuf,
-    time::{SystemTime, UNIX_EPOCH},
 };
+use time::{Date, Duration, Month, PrimitiveDateTime, Time};
 
 use crate::error::{Result, TaskBeepError};
+use crate::heatmap::render_stats_heatmap;
 use crate::protocol::get_status;
 use crate::utils::{
-    DurationDisplay, MAX_INTERVAL_SECS, MAX_TOPIC_LEN, MILLIS_PER_SECOND, SECONDS_PER_DAY,
-    statsfile_path,
+    DurationDisplay, MAX_INTERVAL_SECS, MAX_TOPIC_LEN, MILLIS_PER_SECOND, add_months_snap,
+    current_local_date, monday_start_of_week, parse_calendar_date, parse_shift_range_spec,
+    parse_shift_spec, statsfile_path, topic_matches,
 };
+
+const HEATMAP_MIN_DAYS: u64 = 7;
+const HEATMAP_MAX_DAYS: u64 = 366;
+const MILLIS_PER_DAY: u64 = 24 * 60 * 60 * 1000;
 
 #[derive(Debug, Clone)]
 pub struct StatsEntry {
@@ -102,37 +108,454 @@ pub fn append_stats(entry: &StatsEntry) -> Result<()> {
     Ok(())
 }
 
-pub fn get_period_start_ms(period: &str) -> Option<u64> {
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs();
-
-    let start_secs = match period {
-        "today" => {
-            let secs_since_midnight = now % SECONDS_PER_DAY;
-            now - secs_since_midnight
-        }
-        "week" => {
-            let days_since_epoch = now / SECONDS_PER_DAY;
-            let days_since_monday = (days_since_epoch + 3) % 7;
-            now - (days_since_monday * SECONDS_PER_DAY) - (now % SECONDS_PER_DAY)
-        }
-        "month" => now - (30 * SECONDS_PER_DAY),
-        "year" => now - (365 * SECONDS_PER_DAY),
-        _ => return None,
-    };
-
-    Some(start_secs * MILLIS_PER_SECOND)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PeriodUnit {
+    Day,
+    Week,
+    Month,
+    Year,
 }
 
-pub fn show_stats(filter: Option<&str>) -> Result<()> {
+#[derive(Debug, Clone)]
+struct StatsFilter {
+    start_ms: Option<u64>,
+    end_ms_exclusive: Option<u64>,
+    label: String,
+    heatmap_year: Option<i32>,
+}
+
+fn date_to_utc_ms(date: Date) -> Option<u64> {
+    let dt = PrimitiveDateTime::new(date, Time::MIDNIGHT).assume_utc();
+    u64::try_from(dt.unix_timestamp_nanos() / 1_000_000).ok()
+}
+
+fn range_from_period(unit: PeriodUnit, spec: Option<&str>, today: Date) -> Result<StatsFilter> {
+    let spec = spec.unwrap_or("0");
+
+    if let Some((newest_shift, oldest_shift)) = parse_shift_range_spec(spec) {
+        let (start_date, end_exclusive_date, label) = match unit {
+            PeriodUnit::Day => {
+                let start = today - Duration::days(i64::from(oldest_shift));
+                let end_exclusive =
+                    today - Duration::days(i64::from(newest_shift)) + Duration::days(1);
+                (
+                    start,
+                    end_exclusive,
+                    format!(" (Day {}..{})", newest_shift, oldest_shift),
+                )
+            }
+            PeriodUnit::Week => {
+                let current_week_start = monday_start_of_week(today);
+                let start = current_week_start - Duration::weeks(i64::from(oldest_shift));
+                let end_exclusive = current_week_start - Duration::weeks(i64::from(newest_shift))
+                    + Duration::weeks(1);
+                (
+                    start,
+                    end_exclusive,
+                    format!(" (Week {}..{})", newest_shift, oldest_shift),
+                )
+            }
+            PeriodUnit::Month => {
+                let this_month_start = Date::from_calendar_date(today.year(), today.month(), 1)
+                    .map_err(|e| {
+                        TaskBeepError::StatsError(format!("failed to build month start: {e}"))
+                    })?;
+                let start = add_months_snap(this_month_start, -(oldest_shift as i32))
+                    .ok_or_else(|| TaskBeepError::StatsError("invalid month offset".to_string()))?;
+                let end_exclusive = add_months_snap(this_month_start, -(newest_shift as i32) + 1)
+                    .ok_or_else(|| {
+                    TaskBeepError::StatsError("invalid month offset".to_string())
+                })?;
+                (
+                    start,
+                    end_exclusive,
+                    format!(" (Month {}..{})", newest_shift, oldest_shift),
+                )
+            }
+            PeriodUnit::Year => {
+                let start_year = today.year() - oldest_shift as i32;
+                let end_year = today.year() - newest_shift as i32;
+                let start = Date::from_calendar_date(start_year, Month::January, 1)
+                    .map_err(|e| TaskBeepError::StatsError(format!("invalid year: {e}")))?;
+                let end_exclusive = Date::from_calendar_date(end_year + 1, Month::January, 1)
+                    .map_err(|e| TaskBeepError::StatsError(format!("invalid year: {e}")))?;
+                (
+                    start,
+                    end_exclusive,
+                    format!(" (Year {}..{})", newest_shift, oldest_shift),
+                )
+            }
+        };
+
+        let visible_end = end_exclusive_date - Duration::days(1);
+        let heatmap_year = if start_date.year() == visible_end.year() {
+            Some(start_date.year())
+        } else {
+            None
+        };
+
+        return Ok(StatsFilter {
+            start_ms: date_to_utc_ms(start_date),
+            end_ms_exclusive: date_to_utc_ms(end_exclusive_date),
+            label,
+            heatmap_year,
+        });
+    }
+
+    let shift = parse_shift_spec(spec).ok_or_else(|| {
+        TaskBeepError::StatsError(format!(
+            "invalid period offset '{}': expected 0, ^, or ~N",
+            spec
+        ))
+    })?;
+
+    let (start_date, end_date, label) = match unit {
+        PeriodUnit::Day => {
+            if shift == 0 {
+                (today, None, " (Today)".to_string())
+            } else {
+                let start = today - Duration::days(i64::from(shift));
+                (
+                    start,
+                    Some(today),
+                    format!(" (Last {} Day{})", shift, if shift == 1 { "" } else { "s" }),
+                )
+            }
+        }
+        PeriodUnit::Week => {
+            let current_week_start = monday_start_of_week(today);
+            if shift == 0 {
+                (current_week_start, None, " (This Week)".to_string())
+            } else {
+                let start = current_week_start - Duration::weeks(i64::from(shift));
+                (
+                    start,
+                    Some(current_week_start),
+                    format!(
+                        " (Last {} Week{})",
+                        shift,
+                        if shift == 1 { "" } else { "s" }
+                    ),
+                )
+            }
+        }
+        PeriodUnit::Month => {
+            let this_month_start = Date::from_calendar_date(today.year(), today.month(), 1)
+                .map_err(|e| {
+                    TaskBeepError::StatsError(format!("failed to build month start: {e}"))
+                })?;
+            if shift == 0 {
+                (this_month_start, None, " (This Month)".to_string())
+            } else {
+                let start = add_months_snap(this_month_start, -(shift as i32))
+                    .ok_or_else(|| TaskBeepError::StatsError("invalid month offset".to_string()))?;
+                (
+                    start,
+                    Some(this_month_start),
+                    format!(
+                        " (Last {} Month{})",
+                        shift,
+                        if shift == 1 { "" } else { "s" }
+                    ),
+                )
+            }
+        }
+        PeriodUnit::Year => {
+            let this_year_start = Date::from_calendar_date(today.year(), Month::January, 1)
+                .map_err(|e| {
+                    TaskBeepError::StatsError(format!("failed to build year start: {e}"))
+                })?;
+            if shift == 0 {
+                (this_year_start, None, " (This Year)".to_string())
+            } else {
+                let target_year = today.year() - shift as i32;
+                let start = Date::from_calendar_date(target_year, Month::January, 1)
+                    .map_err(|e| TaskBeepError::StatsError(format!("invalid year: {e}")))?;
+                (
+                    start,
+                    Some(this_year_start),
+                    if shift == 1 {
+                        " (Last Year)".to_string()
+                    } else {
+                        format!(" (Last {} Years)", shift)
+                    },
+                )
+            }
+        }
+    };
+
+    let heatmap_year = match end_date {
+        Some(end_exclusive) => {
+            let visible_end = end_exclusive - Duration::days(1);
+            if start_date.year() == visible_end.year() {
+                Some(start_date.year())
+            } else {
+                None
+            }
+        }
+        None => {
+            if start_date.year() == today.year() {
+                Some(today.year())
+            } else {
+                None
+            }
+        }
+    };
+
+    Ok(StatsFilter {
+        start_ms: date_to_utc_ms(start_date),
+        end_ms_exclusive: end_date.and_then(date_to_utc_ms),
+        label,
+        heatmap_year,
+    })
+}
+
+fn range_from_year_value(year_spec: &str, today: Date) -> Result<StatsFilter> {
+    if let Some(shift) = parse_shift_spec(year_spec) {
+        let normalized = if shift == 0 {
+            "0".to_string()
+        } else {
+            format!("~{shift}")
+        };
+        return range_from_period(PeriodUnit::Year, Some(&normalized), today);
+    }
+
+    let year: i32 = year_spec.parse().map_err(|_| {
+        TaskBeepError::StatsError(format!(
+            "invalid year '{}': expected a year number, ^, or ~N",
+            year_spec
+        ))
+    })?;
+    let start = Date::from_calendar_date(year, Month::January, 1)
+        .map_err(|e| TaskBeepError::StatsError(format!("invalid year {year}: {e}")))?;
+    let end = Date::from_calendar_date(year + 1, Month::January, 1)
+        .map_err(|e| TaskBeepError::StatsError(format!("invalid year {}: {e}", year + 1)))?;
+
+    Ok(StatsFilter {
+        start_ms: date_to_utc_ms(start),
+        end_ms_exclusive: date_to_utc_ms(end),
+        label: format!(" ({year})"),
+        heatmap_year: Some(year),
+    })
+}
+
+fn range_from_expression(expr: &str) -> Result<StatsFilter> {
+    let (start_raw, end_raw) = expr.split_once("..").ok_or_else(|| {
+        TaskBeepError::StatsError(
+            "invalid --range: expected START..END (for example 2024-11-2..2024-11-5)".to_string(),
+        )
+    })?;
+    let start_date = parse_calendar_date(start_raw.trim()).ok_or_else(|| {
+        TaskBeepError::StatsError(format!(
+            "invalid range start '{}': expected YYYY-M-D",
+            start_raw.trim()
+        ))
+    })?;
+    let end_inclusive = parse_calendar_date(end_raw.trim()).ok_or_else(|| {
+        TaskBeepError::StatsError(format!(
+            "invalid range end '{}': expected YYYY-M-D",
+            end_raw.trim()
+        ))
+    })?;
+
+    if end_inclusive < start_date {
+        return Err(TaskBeepError::StatsError(
+            "invalid --range: end date must be >= start date".to_string(),
+        ));
+    }
+
+    let end_exclusive = end_inclusive + Duration::days(1);
+    let heatmap_year = if start_date.year() == end_inclusive.year() {
+        Some(start_date.year())
+    } else {
+        None
+    };
+
+    Ok(StatsFilter {
+        start_ms: date_to_utc_ms(start_date),
+        end_ms_exclusive: date_to_utc_ms(end_exclusive),
+        label: format!(" ({}..{})", start_raw.trim(), end_raw.trim()),
+        heatmap_year,
+    })
+}
+
+fn resolve_stats_filter(
+    day: Option<&str>,
+    week: Option<&str>,
+    month: Option<&str>,
+    year: Option<&str>,
+    range: Option<&str>,
+) -> Result<StatsFilter> {
+    let mut selected = 0;
+    if day.is_some() {
+        selected += 1;
+    }
+    if week.is_some() {
+        selected += 1;
+    }
+    if month.is_some() {
+        selected += 1;
+    }
+    if year.is_some() {
+        selected += 1;
+    }
+    if range.is_some() {
+        selected += 1;
+    }
+
+    if selected > 1 {
+        return Err(TaskBeepError::StatsError(
+            "use only one of: --day, --week, --month, --year, --range".to_string(),
+        ));
+    }
+
+    let now_date = current_local_date();
+
+    if let Some(expr) = range {
+        return range_from_expression(expr);
+    }
+    if let Some(spec) = day {
+        return range_from_period(PeriodUnit::Day, Some(spec), now_date);
+    }
+    if let Some(spec) = week {
+        return range_from_period(PeriodUnit::Week, Some(spec), now_date);
+    }
+    if let Some(spec) = month {
+        return range_from_period(PeriodUnit::Month, Some(spec), now_date);
+    }
+    if let Some(spec) = year {
+        return range_from_year_value(spec, now_date);
+    }
+
+    Ok(StatsFilter {
+        start_ms: None,
+        end_ms_exclusive: None,
+        label: String::new(),
+        heatmap_year: None,
+    })
+}
+
+fn validate_heatmap_window(filter: &StatsFilter, today: Date) -> Result<()> {
+    let Some(start_ms) = filter.start_ms else {
+        // Unbounded/all-time stats are allowed; heatmap rendering already constrains to one year.
+        return Ok(());
+    };
+
+    let fallback_end_ms = date_to_utc_ms(today + Duration::days(1)).ok_or_else(|| {
+        TaskBeepError::StatsError("failed to resolve current date for heatmap window".to_string())
+    })?;
+    let end_ms = filter.end_ms_exclusive.unwrap_or(fallback_end_ms);
+
+    if end_ms <= start_ms {
+        return Err(TaskBeepError::StatsError(
+            "invalid heatmap range: end must be after start".to_string(),
+        ));
+    }
+
+    let span_days = (end_ms - start_ms).div_ceil(MILLIS_PER_DAY);
+    if span_days < HEATMAP_MIN_DAYS {
+        return Err(TaskBeepError::StatsError(format!(
+            "heatmap range is too short: minimum is {} days",
+            HEATMAP_MIN_DAYS
+        )));
+    }
+    if span_days > HEATMAP_MAX_DAYS {
+        return Err(TaskBeepError::StatsError(format!(
+            "heatmap range is too long: maximum is {} days",
+            HEATMAP_MAX_DAYS
+        )));
+    }
+
+    Ok(())
+}
+
+fn has_any_period_filter(
+    day: Option<&str>,
+    week: Option<&str>,
+    month: Option<&str>,
+    year: Option<&str>,
+    range: Option<&str>,
+) -> bool {
+    day.is_some() || week.is_some() || month.is_some() || year.is_some() || range.is_some()
+}
+
+fn has_explicit_range_syntax(
+    day: Option<&str>,
+    week: Option<&str>,
+    month: Option<&str>,
+    year: Option<&str>,
+    range: Option<&str>,
+) -> bool {
+    range.is_some()
+        || day.is_some_and(|s| s.contains(".."))
+        || week.is_some_and(|s| s.contains(".."))
+        || month.is_some_and(|s| s.contains(".."))
+        || year.is_some_and(|s| s.contains(".."))
+}
+
+pub fn read_stats_entries(filter_start_ms: Option<u64>) -> Result<Vec<StatsEntry>> {
     let stats_path = statsfile_path();
     if !stats_path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let file = File::open(&stats_path)?;
+    let reader = BufReader::new(file);
+    let mut entries = Vec::new();
+
+    for line in reader.lines() {
+        let line = line?;
+        if let Some(entry) = StatsEntry::from_line(&line) {
+            if let Some(start_ms) = filter_start_ms
+                && entry.start_time_ms < start_ms
+            {
+                continue;
+            }
+            entries.push(entry);
+        }
+    }
+
+    Ok(entries)
+}
+
+pub fn show_stats(
+    topic: Option<&str>,
+    day: Option<&str>,
+    week: Option<&str>,
+    month: Option<&str>,
+    year: Option<&str>,
+    range: Option<&str>,
+    show_heatmap: bool,
+) -> Result<()> {
+    if show_heatmap
+        && has_any_period_filter(day, week, month, year, range)
+        && !has_explicit_range_syntax(day, week, month, year, range)
+    {
+        return Err(TaskBeepError::StatsError(
+            "heatmap with period filters requires an explicit range using '..' (for example: -d '~0..~8' or --range 2024-11-2..2024-11-5)".to_string(),
+        ));
+    }
+
+    let filter = resolve_stats_filter(day, week, month, year, range)?;
+    if show_heatmap {
+        let today = current_local_date();
+        validate_heatmap_window(&filter, today)?;
+    }
+
+    let all_in_range = read_stats_entries(filter.start_ms)?;
+    let entries: Vec<_> = all_in_range
+        .into_iter()
+        .filter(|e| {
+            filter
+                .end_ms_exclusive
+                .is_none_or(|end| e.start_time_ms < end)
+        })
+        .filter(|e| topic.is_none_or(|t| topic_matches(t, &e.topic)))
+        .collect();
+    if entries.is_empty() {
         println!("No statistics available yet");
         return Ok(());
     }
-
-    let filter_start = filter.and_then(get_period_start_ms);
-    let file = File::open(&stats_path)?;
-    let reader = BufReader::new(file);
 
     let mut total_working_ms = 0u64;
     let mut total_wasting_ms = 0u64;
@@ -141,33 +564,24 @@ pub fn show_stats(filter: Option<&str>) -> Result<()> {
     // (working_ms, wasting_ms, pause_count, pause_duration_ms)
     let mut topic_stats: HashMap<String, (u64, u64, u64, u64)> = HashMap::new();
 
-    for line in reader.lines() {
-        let line = line?;
-        if let Some(entry) = StatsEntry::from_line(&line) {
-            if let Some(start) = filter_start
-                && entry.start_time_ms < start
-            {
-                continue;
-            }
+    for entry in &entries {
+        let duration = entry.duration_ms();
+        let stats = topic_stats
+            .entry(entry.topic.clone())
+            .or_insert((0, 0, 0, 0));
 
-            let duration = entry.duration_ms();
-            let stats = topic_stats
-                .entry(entry.topic.clone())
-                .or_insert((0, 0, 0, 0));
-
-            if entry.was_working {
-                total_working_ms += duration;
-                stats.0 += duration;
-            } else {
-                total_wasting_ms += duration;
-                stats.1 += duration;
-            }
-
-            total_pause_count += entry.pause_count;
-            total_pause_duration_ms += entry.pause_duration_ms;
-            stats.2 += entry.pause_count;
-            stats.3 += entry.pause_duration_ms;
+        if entry.was_working {
+            total_working_ms += duration;
+            stats.0 += duration;
+        } else {
+            total_wasting_ms += duration;
+            stats.1 += duration;
         }
+
+        total_pause_count += entry.pause_count;
+        total_pause_duration_ms += entry.pause_duration_ms;
+        stats.2 += entry.pause_count;
+        stats.3 += entry.pause_duration_ms;
     }
 
     if total_working_ms == 0 && total_wasting_ms == 0 {
@@ -178,15 +592,12 @@ pub fn show_stats(filter: Option<&str>) -> Result<()> {
     let total_ms = total_working_ms + total_wasting_ms;
     let productivity = (total_working_ms as f64 / total_ms as f64) * 100.0;
 
-    let period_label = match filter {
-        Some("today") => " (Today)",
-        Some("week") => " (This Week)",
-        Some("month") => " (This Month)",
-        Some("year") => " (This Year)",
-        _ => "",
-    };
+    let topic_label = topic.map(|t| format!(" [{}]", t)).unwrap_or_default();
 
-    println!("=== Productivity Statistics{} ===", period_label);
+    println!(
+        "=== Productivity Statistics{}{} ===",
+        filter.label, topic_label
+    );
     println!("Total time: {}", DurationDisplay(total_ms));
     println!("Working: {}", DurationDisplay(total_working_ms));
     println!("Wasting: {}", DurationDisplay(total_wasting_ms));
@@ -223,6 +634,12 @@ pub fn show_stats(filter: Option<&str>) -> Result<()> {
                 prod
             );
         }
+    }
+
+    if show_heatmap {
+        println!();
+        println!("=== Heatmap ===");
+        print!("{}", render_stats_heatmap(&entries, filter.heatmap_year)?);
     }
 
     Ok(())
@@ -266,7 +683,7 @@ pub fn clear_stats(topic: Option<String>, skip_confirmation: bool) -> Result<()>
             let line = line?;
             if let Some(entry) = StatsEntry::from_line(&line) {
                 all_topics.insert(entry.topic.clone());
-                if entry.topic == topic_name {
+                if topic_matches(&topic_name, &entry.topic) {
                     matching_entries.push(entry);
                 } else {
                     other_entries.push(entry);
@@ -275,41 +692,7 @@ pub fn clear_stats(topic: Option<String>, skip_confirmation: bool) -> Result<()>
         }
 
         if matching_entries.is_empty() {
-            let topic_lower = topic_name.to_lowercase();
-
-            let exact_case_insensitive: Vec<_> = all_topics
-                .iter()
-                .filter(|t| t.to_lowercase() == topic_lower)
-                .collect();
-
-            if !exact_case_insensitive.is_empty() {
-                println!(
-                    "No exact match found for '{}'. Did you mean one of these (case-sensitive)?",
-                    topic_name
-                );
-                for t in exact_case_insensitive {
-                    println!("  {}", t);
-                }
-                return Ok(());
-            }
-
-            let partial_matches: Vec<_> = all_topics
-                .iter()
-                .filter(|t| t.to_lowercase().contains(&topic_lower))
-                .collect();
-
-            if !partial_matches.is_empty() {
-                println!(
-                    "No exact match found for '{}'. Did you mean one of these?",
-                    topic_name
-                );
-                for t in partial_matches {
-                    println!("  {}", t);
-                }
-                return Ok(());
-            }
-
-            println!("No statistics found for topic: '{}'", topic_name);
+            println!("No statistics found matching '{}'", topic_name);
             if !all_topics.is_empty() {
                 println!("\nAvailable topics:");
                 let mut sorted_topics: Vec<_> = all_topics.iter().collect();
@@ -389,6 +772,13 @@ pub fn clear_stats(topic: Option<String>, skip_confirmation: bool) -> Result<()>
 mod tests {
     use super::*;
     use crate::utils::now_ms;
+    use time::OffsetDateTime;
+
+    fn ms_to_date(ms: u64) -> Date {
+        OffsetDateTime::from_unix_timestamp_nanos((ms as i128) * 1_000_000)
+            .unwrap()
+            .date()
+    }
 
     #[test]
     fn test_stats_entry_serialization() {
@@ -510,6 +900,185 @@ mod tests {
         assert_eq!(filtered.len(), 2);
         assert_eq!(filtered[0].topic, "recent");
         assert_eq!(filtered[1].topic, "current");
+    }
+
+    #[test]
+    fn test_parse_shift_range_spec() {
+        assert_eq!(parse_shift_range_spec("^..~3"), Some((1, 3)));
+        assert_eq!(parse_shift_range_spec("~4..^"), Some((1, 4)));
+        assert_eq!(parse_shift_range_spec("0..~2"), Some((0, 2)));
+        assert_eq!(parse_shift_range_spec("^..^"), Some((1, 1)));
+        assert_eq!(parse_shift_range_spec("~3..~6"), Some((3, 6)));
+        assert_eq!(parse_shift_range_spec("~6..~3"), Some((3, 6)));
+        assert_eq!(parse_shift_range_spec("foo..~2"), None);
+    }
+
+    #[test]
+    fn test_month_range_from_git_style_expression() {
+        let today = Date::from_calendar_date(2026, Month::March, 15).unwrap();
+        let filter = range_from_period(PeriodUnit::Month, Some("^..~3"), today).unwrap();
+
+        assert_eq!(
+            ms_to_date(filter.start_ms.unwrap()),
+            Date::from_calendar_date(2025, Month::December, 1).unwrap()
+        );
+        assert_eq!(
+            ms_to_date(filter.end_ms_exclusive.unwrap()),
+            Date::from_calendar_date(2026, Month::March, 1).unwrap()
+        );
+        assert_eq!(filter.heatmap_year, None);
+    }
+
+    #[test]
+    fn test_year_range_from_git_style_expression() {
+        let today = Date::from_calendar_date(2026, Month::March, 15).unwrap();
+        let filter = range_from_period(PeriodUnit::Year, Some("^..~3"), today).unwrap();
+
+        assert_eq!(
+            ms_to_date(filter.start_ms.unwrap()),
+            Date::from_calendar_date(2023, Month::January, 1).unwrap()
+        );
+        assert_eq!(
+            ms_to_date(filter.end_ms_exclusive.unwrap()),
+            Date::from_calendar_date(2026, Month::January, 1).unwrap()
+        );
+        assert_eq!(filter.heatmap_year, None);
+    }
+
+    #[test]
+    fn test_explicit_date_range_expression() {
+        let filter = range_from_expression("2024-11-2..2024-11-5").unwrap();
+        assert_eq!(
+            ms_to_date(filter.start_ms.unwrap()),
+            Date::from_calendar_date(2024, Month::November, 2).unwrap()
+        );
+        assert_eq!(
+            ms_to_date(filter.end_ms_exclusive.unwrap()),
+            Date::from_calendar_date(2024, Month::November, 6).unwrap()
+        );
+        assert_eq!(filter.heatmap_year, Some(2024));
+    }
+
+    #[test]
+    fn test_diff_zero_produces_single_period() {
+        let today = Date::from_calendar_date(2026, Month::March, 15).unwrap();
+
+        let day = range_from_period(PeriodUnit::Day, Some("^..^"), today).unwrap();
+        assert_eq!(
+            ms_to_date(day.start_ms.unwrap()),
+            Date::from_calendar_date(2026, Month::March, 14).unwrap()
+        );
+        assert_eq!(
+            ms_to_date(day.end_ms_exclusive.unwrap()),
+            Date::from_calendar_date(2026, Month::March, 15).unwrap()
+        );
+
+        let week = range_from_period(PeriodUnit::Week, Some("^..^"), today).unwrap();
+        assert_eq!(
+            ms_to_date(week.start_ms.unwrap()),
+            Date::from_calendar_date(2026, Month::March, 2).unwrap()
+        );
+        assert_eq!(
+            ms_to_date(week.end_ms_exclusive.unwrap()),
+            Date::from_calendar_date(2026, Month::March, 9).unwrap()
+        );
+
+        let month = range_from_period(PeriodUnit::Month, Some("^..^"), today).unwrap();
+        assert_eq!(
+            ms_to_date(month.start_ms.unwrap()),
+            Date::from_calendar_date(2026, Month::February, 1).unwrap()
+        );
+        assert_eq!(
+            ms_to_date(month.end_ms_exclusive.unwrap()),
+            Date::from_calendar_date(2026, Month::March, 1).unwrap()
+        );
+
+        let year = range_from_period(PeriodUnit::Year, Some("^..^"), today).unwrap();
+        assert_eq!(
+            ms_to_date(year.start_ms.unwrap()),
+            Date::from_calendar_date(2025, Month::January, 1).unwrap()
+        );
+        assert_eq!(
+            ms_to_date(year.end_ms_exclusive.unwrap()),
+            Date::from_calendar_date(2026, Month::January, 1).unwrap()
+        );
+    }
+
+    #[test]
+    fn test_bidirectional_delta_range_is_equivalent() {
+        let today = Date::from_calendar_date(2026, Month::March, 15).unwrap();
+
+        let a = range_from_period(PeriodUnit::Month, Some("~3..~6"), today).unwrap();
+        let b = range_from_period(PeriodUnit::Month, Some("~6..~3"), today).unwrap();
+        assert_eq!(a.start_ms, b.start_ms);
+        assert_eq!(a.end_ms_exclusive, b.end_ms_exclusive);
+
+        let a = range_from_period(PeriodUnit::Year, Some("~3..~6"), today).unwrap();
+        let b = range_from_period(PeriodUnit::Year, Some("~6..~3"), today).unwrap();
+        assert_eq!(a.start_ms, b.start_ms);
+        assert_eq!(a.end_ms_exclusive, b.end_ms_exclusive);
+    }
+
+    #[test]
+    fn test_heatmap_minimum_window_validation() {
+        let today = Date::from_calendar_date(2026, Month::March, 15).unwrap();
+        let short_filter = range_from_period(PeriodUnit::Day, Some("^..^"), today).unwrap();
+
+        let err = validate_heatmap_window(&short_filter, today).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("heatmap range is too short: minimum is 7 days")
+        );
+    }
+
+    #[test]
+    fn test_heatmap_maximum_window_validation() {
+        let today = Date::from_calendar_date(2026, Month::March, 15).unwrap();
+        let long_filter = range_from_expression("2024-1-1..2025-12-31").unwrap();
+
+        let err = validate_heatmap_window(&long_filter, today).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("heatmap range is too long: maximum is 366 days")
+        );
+    }
+
+    #[test]
+    fn test_heatmap_window_within_limits_is_valid() {
+        let today = Date::from_calendar_date(2026, Month::March, 15).unwrap();
+        let valid_filter = range_from_period(PeriodUnit::Month, Some("^..~3"), today).unwrap();
+
+        validate_heatmap_window(&valid_filter, today).unwrap();
+    }
+
+    #[test]
+    fn test_heatmap_explicit_range_detection() {
+        assert!(!has_any_period_filter(None, None, None, None, None));
+        assert!(!has_explicit_range_syntax(None, None, None, None, None));
+
+        assert!(has_any_period_filter(Some("~8"), None, None, None, None));
+        assert!(!has_explicit_range_syntax(
+            Some("~8"),
+            None,
+            None,
+            None,
+            None
+        ));
+
+        assert!(has_explicit_range_syntax(
+            Some("~0..~8"),
+            None,
+            None,
+            None,
+            None
+        ));
+        assert!(has_explicit_range_syntax(
+            None,
+            None,
+            None,
+            None,
+            Some("2024-11-2..2024-11-5")
+        ));
     }
 
     // duration_ms must equal the configured interval, not the wall-clock elapsed time.

@@ -2,9 +2,12 @@ mod audio;
 mod commands;
 mod config;
 mod error;
+mod heatmap;
 mod protocol;
 mod stats;
 mod timer;
+#[cfg(feature = "ui")]
+mod ui;
 mod utils;
 
 use clap::{Parser, Subcommand};
@@ -16,6 +19,8 @@ use crate::error::TaskBeepError;
 use crate::protocol::{CMD_PAUSE, CMD_RESUME, CMD_TOGGLE, Status, get_status};
 use crate::stats::{clear_stats, export_stats, show_stats};
 use crate::timer::start_timer;
+#[cfg(feature = "ui")]
+use crate::ui::run_ui;
 
 static CONFIG: OnceLock<Config> = OnceLock::new();
 static AUDIO_DATA: OnceLock<Vec<u8>> = OnceLock::new();
@@ -89,19 +94,29 @@ enum Commands {
     Wasting,
     /// Show productivity statistics
     Stats {
-        /// Show today's stats
-        #[arg(short = 'd', long)]
-        today: bool,
-        /// Show this week's stats
-        #[arg(short = 'w', long)]
-        week: bool,
-        /// Show this month's stats
-        #[arg(short = 'm', long)]
-        month: bool,
-        /// Show this year's stats
-        #[arg(short = 'y', long)]
-        year: bool,
+        /// Only show stats for this topic
+        topic: Option<String>,
+        /// Show day stats; optional offset: ^ or ~N (e.g. -d ^, -d ~3)
+        #[arg(short = 'd', long, num_args = 0..=1, default_missing_value = "0", value_name = "OFFSET")]
+        day: Option<String>,
+        /// Show week stats; optional offset: ^ or ~N (e.g. -w ^, -w ~2)
+        #[arg(short = 'w', long, num_args = 0..=1, default_missing_value = "0", value_name = "OFFSET")]
+        week: Option<String>,
+        /// Show month stats; optional offset: ^ or ~N (e.g. -m ^, -m ~3)
+        #[arg(short = 'm', long, num_args = 0..=1, default_missing_value = "0", value_name = "OFFSET")]
+        month: Option<String>,
+        /// Show year stats; accepts a year or offset: -y 2025, -y ^, -y ~1
+        #[arg(short = 'y', long, num_args = 0..=1, default_missing_value = "0", value_name = "YEAR_OR_OFFSET")]
+        year: Option<String>,
+        /// Explicit date range (inclusive): YYYY-M-D..YYYY-M-D
+        #[arg(long, value_name = "START..END")]
+        range: Option<String>,
+        /// Print a GitHub-style time heatmap
+        #[arg(long)]
+        heatmap: bool,
     },
+    /// Open interactive one-page terminal UI
+    Ui,
     /// Export statistics to a file (default: ./taskbeep_stats.tsv)
     Export {
         /// Output file path
@@ -139,7 +154,7 @@ fn main() {
             let interval = interval.unwrap_or_else(|| get_config().session_duration);
             start_timer(topic, interval, response_timeout)
         }
-        Commands::Stop { working, wasting } => stop_timer(working, wasting),
+        Commands::Stop { working, wasting } => stop_timer(working, wasting, false),
         Commands::Pause => pause_resume_toggle(CMD_PAUSE, "paused", "pause"),
         Commands::Resume => pause_resume_toggle(CMD_RESUME, "resumed", "resume"),
         Commands::Toggle => match get_status() {
@@ -153,24 +168,23 @@ fn main() {
         Commands::Working => send_signal(true),
         Commands::Wasting => send_signal(false),
         Commands::Stats {
-            today,
+            topic,
+            day,
             week,
             month,
             year,
-        } => {
-            let filter = if today {
-                Some("today")
-            } else if week {
-                Some("week")
-            } else if month {
-                Some("month")
-            } else if year {
-                Some("year")
-            } else {
-                None
-            };
-            show_stats(filter)
-        }
+            range,
+            heatmap,
+        } => show_stats(
+            topic.as_deref(),
+            day.as_deref(),
+            week.as_deref(),
+            month.as_deref(),
+            year.as_deref(),
+            range.as_deref(),
+            heatmap,
+        ),
+        Commands::Ui => launch_ui(),
         Commands::Export { output } => export_stats(output),
         Commands::Clear { topic, yes } => clear_stats(topic, yes),
         Commands::Config { path, reset } => {
@@ -226,4 +240,16 @@ fn main() {
         eprintln!("Error: {}", e);
         std::process::exit(1);
     }
+}
+
+#[cfg(feature = "ui")]
+fn launch_ui() -> crate::error::Result<()> {
+    run_ui()
+}
+
+#[cfg(not(feature = "ui"))]
+fn launch_ui() -> crate::error::Result<()> {
+    Err(TaskBeepError::ConfigError(
+        "UI support is disabled in this build. Rebuild with: cargo build --features ui".to_string(),
+    ))
 }
