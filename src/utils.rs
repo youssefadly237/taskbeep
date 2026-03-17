@@ -358,14 +358,15 @@ fn wildcard_match(pat: &str, text: &str) -> bool {
     dp[m][n]
 }
 
-/// Heatmap intensity level (0–4) from working ms and maximum ms.
+/// Heatmap intensity level (0–HEATMAP_LEVELS) from working ms and maximum ms.
 /// Uses sqrt normalisation so mid-range values stay visible.
 pub fn heatmap_intensity(working_ms: u64, max_working_ms: u64) -> u8 {
     if working_ms == 0 || max_working_ms == 0 {
         return 0;
     }
     let normalized = (working_ms as f64 / max_working_ms as f64).sqrt();
-    (normalized * 4.0).ceil().clamp(1.0, 4.0) as u8
+    let scaled = (normalized * HEATMAP_LEVELS as f64).ceil();
+    scaled.clamp(1.0, HEATMAP_LEVELS as f64) as u8
 }
 
 /// Shared heatmap cell-level selection for both CLI and TUI renderers.

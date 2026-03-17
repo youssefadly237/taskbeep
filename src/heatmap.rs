@@ -75,13 +75,24 @@ impl ColorMode {
 pub fn render_stats_heatmap(entries: &[StatsEntry], year: Option<i32>) -> Result<String> {
     let offset = UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
     let today = OffsetDateTime::now_utc().to_offset(offset).date();
-    let inferred_year = entries
-        .iter()
-        .filter_map(|entry| local_date_from_ms(entry.start_time_ms, offset).ok())
-        .map(|date| date.year())
-        .max();
+    let mut inferred_year: Option<i32> = None;
+    let mut window_start: Option<Date> = None;
+    let mut window_end: Option<Date> = None;
+    for entry in entries {
+        if let Ok(date) = local_date_from_ms(entry.start_time_ms, offset) {
+            inferred_year = Some(inferred_year.map_or(date.year(), |y| y.max(date.year())));
+            window_start = Some(window_start.map_or(date, |cur| cur.min(date)));
+            window_end = Some(window_end.map_or(date, |cur| cur.max(date)));
+        }
+    }
+
     let year = year.or(inferred_year).unwrap_or(today.year());
-    let heatmap = build_heatmap(entries, year, offset)?;
+    let heatmap = if let (Some(start), Some(end)) = (window_start, window_end) {
+        build_heat_grid(entries, start, end, offset)?
+    } else {
+        build_heatmap(entries, year, offset)?
+    };
+
     Ok(render_heatmap(
         &heatmap,
         ColorMode::detect(),

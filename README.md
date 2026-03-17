@@ -377,7 +377,18 @@ Notes:
 ## Building
 
 ```bash
+# Build release binary
 cargo build --release
+
+# Install locally
+cargo install --path .
+
+# Install with the optional TUI feature
+cargo install --path . --features ui
+
+# Or build and run the TUI without installing
+cargo build --release --features ui
+./target/release/taskbeep ui
 ```
 
 The binary will be at `target/release/taskbeep`

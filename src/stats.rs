@@ -5,7 +5,7 @@ use std::{
     os::unix::fs::OpenOptionsExt,
     path::PathBuf,
 };
-use time::{Date, Duration, Month, PrimitiveDateTime, Time};
+use time::{Date, Duration, Month, PrimitiveDateTime, Time, UtcOffset};
 
 use crate::error::{Result, TaskBeepError};
 use crate::heatmap::render_stats_heatmap;
@@ -125,7 +125,8 @@ struct StatsFilter {
 }
 
 fn date_to_utc_ms(date: Date) -> Option<u64> {
-    let dt = PrimitiveDateTime::new(date, Time::MIDNIGHT).assume_utc();
+    let offset = UtcOffset::current_local_offset().ok()?;
+    let dt = PrimitiveDateTime::new(date, Time::MIDNIGHT).assume_offset(offset);
     u64::try_from(dt.unix_timestamp_nanos() / 1_000_000).ok()
 }
 
@@ -211,76 +212,63 @@ fn range_from_period(unit: PeriodUnit, spec: Option<&str>, today: Date) -> Resul
 
     let (start_date, end_date, label) = match unit {
         PeriodUnit::Day => {
-            if shift == 0 {
-                (today, None, " (Today)".to_string())
+            let target_day = today - Duration::days(i64::from(shift));
+            let end = target_day + Duration::days(1);
+            let label = if shift == 0 {
+                " (Today)".to_string()
+            } else if shift == 1 {
+                " (Yesterday)".to_string()
             } else {
-                let start = today - Duration::days(i64::from(shift));
-                (
-                    start,
-                    Some(today),
-                    format!(" (Last {} Day{})", shift, if shift == 1 { "" } else { "s" }),
-                )
-            }
+                format!(" ({} Days Ago)", shift)
+            };
+            (target_day, Some(end), label)
         }
         PeriodUnit::Week => {
             let current_week_start = monday_start_of_week(today);
-            if shift == 0 {
-                (current_week_start, None, " (This Week)".to_string())
+            let target_week_start = current_week_start - Duration::weeks(i64::from(shift));
+            let end = target_week_start + Duration::weeks(1);
+            let label = if shift == 0 {
+                " (This Week)".to_string()
+            } else if shift == 1 {
+                " (Last Week)".to_string()
             } else {
-                let start = current_week_start - Duration::weeks(i64::from(shift));
-                (
-                    start,
-                    Some(current_week_start),
-                    format!(
-                        " (Last {} Week{})",
-                        shift,
-                        if shift == 1 { "" } else { "s" }
-                    ),
-                )
-            }
+                format!(" ({} Weeks Ago)", shift)
+            };
+            (target_week_start, Some(end), label)
         }
         PeriodUnit::Month => {
             let this_month_start = Date::from_calendar_date(today.year(), today.month(), 1)
                 .map_err(|e| {
                     TaskBeepError::StatsError(format!("failed to build month start: {e}"))
                 })?;
-            if shift == 0 {
-                (this_month_start, None, " (This Month)".to_string())
+            let target_month_start = add_months_snap(this_month_start, -(shift as i32))
+                .ok_or_else(|| TaskBeepError::StatsError("invalid month offset".to_string()))?;
+            let end = add_months_snap(target_month_start, 1).ok_or_else(|| {
+                TaskBeepError::StatsError("failed to compute end of month".to_string())
+            })?;
+            let label = if shift == 0 {
+                " (This Month)".to_string()
+            } else if shift == 1 {
+                " (Last Month)".to_string()
             } else {
-                let start = add_months_snap(this_month_start, -(shift as i32))
-                    .ok_or_else(|| TaskBeepError::StatsError("invalid month offset".to_string()))?;
-                (
-                    start,
-                    Some(this_month_start),
-                    format!(
-                        " (Last {} Month{})",
-                        shift,
-                        if shift == 1 { "" } else { "s" }
-                    ),
-                )
-            }
+                format!(" ({} Months Ago)", shift)
+            };
+            (target_month_start, Some(end), label)
         }
         PeriodUnit::Year => {
-            let this_year_start = Date::from_calendar_date(today.year(), Month::January, 1)
-                .map_err(|e| {
-                    TaskBeepError::StatsError(format!("failed to build year start: {e}"))
-                })?;
-            if shift == 0 {
-                (this_year_start, None, " (This Year)".to_string())
+            let target_year = today.year() - shift as i32;
+            let start = Date::from_calendar_date(target_year, Month::January, 1)
+                .map_err(|e| TaskBeepError::StatsError(format!("invalid year: {e}")))?;
+            let end = Date::from_calendar_date(target_year + 1, Month::January, 1)
+                .map_err(|e| TaskBeepError::StatsError(format!("invalid year end: {e}")))?;
+            let label = if shift == 0 {
+                " (This Year)".to_string()
+            } else if shift == 1 {
+                " (Last Year)".to_string()
             } else {
-                let target_year = today.year() - shift as i32;
-                let start = Date::from_calendar_date(target_year, Month::January, 1)
-                    .map_err(|e| TaskBeepError::StatsError(format!("invalid year: {e}")))?;
-                (
-                    start,
-                    Some(this_year_start),
-                    if shift == 1 {
-                        " (Last Year)".to_string()
-                    } else {
-                        format!(" (Last {} Years)", shift)
-                    },
-                )
-            }
+                format!(" ({} Years Ago)", shift)
+            };
+            (start, Some(end), label)
         }
     };
 
@@ -772,11 +760,13 @@ pub fn clear_stats(topic: Option<String>, skip_confirmation: bool) -> Result<()>
 mod tests {
     use super::*;
     use crate::utils::now_ms;
-    use time::OffsetDateTime;
+    use time::{OffsetDateTime, UtcOffset};
 
     fn ms_to_date(ms: u64) -> Date {
+        let offset = UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
         OffsetDateTime::from_unix_timestamp_nanos((ms as i128) * 1_000_000)
             .unwrap()
+            .to_offset(offset)
             .date()
     }
 
