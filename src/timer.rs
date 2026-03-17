@@ -466,8 +466,6 @@ pub fn run_daemon(topic: String, interval_ms: u64, response_timeout: Option<u64>
             *session = SessionState::new(now_ms());
         }
 
-        let _session_start = Instant::now();
-
         while state.running.load(Ordering::Acquire) {
             let now = Instant::now();
             let session = state.session_state.lock().unwrap();
@@ -476,7 +474,7 @@ pub fn run_daemon(topic: String, interval_ms: u64, response_timeout: Option<u64>
                 drop(session);
                 if let Ok(mut resp_state) = state.response_state.lock() {
                     resp_state.clear_pause_flag();
-                    let _guard = state.response_condvar.wait(resp_state);
+                    drop(state.response_condvar.wait(resp_state));
                 }
                 continue;
             }
