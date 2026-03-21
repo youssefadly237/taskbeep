@@ -164,10 +164,12 @@ impl App {
         let entries = read_stats_entries(None)?;
         let (start, end, title) = year_window(year)?;
         let model = build_heatmap_model(&entries, start, end, title, offset)?;
+        let today = OffsetDateTime::now_utc().to_offset(offset).date();
         let selected_index = model
             .cells
             .iter()
-            .position(|c| c.in_window)
+            .position(|c| c.date == today)
+            .or_else(|| model.cells.iter().position(|c| c.in_window))
             .unwrap_or_default();
 
         Ok(Self {
