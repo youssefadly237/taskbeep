@@ -950,7 +950,7 @@ impl App {
                 let mut spans = framed_label("Timer");
                 spans.extend(framed_prompt(
                     's',
-                    format!(" {} ", value),
+                    format!(" {}_ ", value),
                     Some(enter_span()),
                 ));
                 spans.extend(framed_hotkey_label('t', "oggle"));
@@ -1002,9 +1002,9 @@ impl App {
             } => {
                 let mut spans = framed_label(&heatmap_label);
                 let body = if *editing_end {
-                    format!(" {} .. [{}] ", start, end)
+                    format!(" {} .. [{}_] ", start, end)
                 } else {
-                    format!(" [{}] .. {} ", start, end)
+                    format!(" [{}_] .. {} ", start, end)
                 };
                 spans.extend(framed_prompt('r', body, Some(enter_span())));
                 if self.topic_filter.is_some() {
@@ -1019,7 +1019,7 @@ impl App {
                 let mut spans = framed_label(&heatmap_label);
                 spans.extend(framed_prompt(
                     'f',
-                    format!(" {} ", value),
+                    format!(" {}_ ", value),
                     Some(enter_span()),
                 ));
                 Line::from(spans)
