@@ -354,6 +354,28 @@ taskbeep config --reset
 cat $(taskbeep config --path)
 ```
 
+### Shell Completions
+
+Enable tab-completion for your shell:
+
+```bash
+# Bash
+echo "source <(COMPLETE=bash taskbeep)" >> ~/.bashrc
+
+# Zsh
+echo "source <(COMPLETE=zsh taskbeep)" >> ~/.zshrc
+
+# Fish
+echo "COMPLETE=fish taskbeep | source" >> ~/.config/fish/config.fish
+```
+
+Or generate static scripts:
+
+```bash
+taskbeep completions bash > /tmp/taskbeep.bash
+source /tmp/taskbeep.bash
+```
+
 ## Installation
 
 ```bash

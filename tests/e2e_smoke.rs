@@ -44,6 +44,19 @@ impl TestEnv {
             .expect("failed to execute taskbeep")
     }
 
+    fn run_completion(&self, args: &[&str]) -> Output {
+        Command::new(env!("CARGO_BIN_EXE_taskbeep"))
+            .args(args)
+            .env("COMPLETE", "bash")
+            // Index 2 is the third token: the topic argument in "taskbeep start <TAB>".
+            .env("_CLAP_COMPLETE_INDEX", "2")
+            .env("_CLAP_COMPLETE_SPACE", "true")
+            .env("XDG_RUNTIME_DIR", &self.runtime_dir)
+            .env("HOME", &self.home_dir)
+            .output()
+            .expect("failed to execute taskbeep completion")
+    }
+
     fn run_ok(&self, args: &[&str]) -> Output {
         let output = self.run(args);
         assert!(
@@ -122,6 +135,36 @@ fn daemon_socket_cli_smoke_flow() {
         field_count, 7,
         "stats entry has unexpected field count: {} ({})",
         field_count, first_line
+    );
+}
+
+#[test]
+fn env_completion_returns_topics_for_start() {
+    let env = TestEnv::new();
+
+    fs::write(
+        &env.stats_path,
+        "1000\t2000\t1000\t0\t0\tHIC-211\tworking\n1000\t2000\t1000\t0\t0\ttyping\tworking\n",
+    )
+    .expect("failed to seed stats file");
+
+    let output = env.run_completion(&["--", "taskbeep", "start", ""]);
+    assert!(
+        output.status.success(),
+        "completion command failed: exit: {:?}\nstdout:\n{}\nstderr:\n{}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("HIC-211"),
+        "missing topic completion: {stdout}"
+    );
+    assert!(
+        stdout.contains("--help"),
+        "missing help completion: {stdout}"
     );
 }
 
