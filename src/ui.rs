@@ -40,6 +40,8 @@ enum UiMode {
     },
     StartInput {
         value: String,
+        search_query: String,
+        selected_index: usize,
     },
     RangeInput {
         start: String,
@@ -262,9 +264,22 @@ impl App {
                 }
                 Ok(false)
             }
-            UiMode::StartInput { mut value } => {
-                if self.handle_text_input_key(code, &mut value, false)? {
-                    self.mode = UiMode::StartInput { value };
+            UiMode::StartInput {
+                mut value,
+                mut search_query,
+                mut selected_index,
+            } => {
+                if self.handle_start_input_key(
+                    code,
+                    &mut value,
+                    &mut search_query,
+                    &mut selected_index,
+                )? {
+                    self.mode = UiMode::StartInput {
+                        value,
+                        search_query,
+                        selected_index,
+                    };
                 }
                 Ok(false)
             }
@@ -346,6 +361,8 @@ impl App {
                 self.clear_error();
                 self.mode = UiMode::StartInput {
                     value: String::new(),
+                    search_query: String::new(),
+                    selected_index: 0,
                 };
             }
             KeyCode::Char('t') => {
@@ -430,6 +447,102 @@ impl App {
             }
             _ => Ok(true),
         }
+    }
+
+    fn handle_start_input_key(
+        &mut self,
+        code: KeyCode,
+        value: &mut String,
+        search_query: &mut String,
+        selected_index: &mut usize,
+    ) -> Result<bool> {
+        let matches = self.get_matching_topics(search_query);
+
+        match code {
+            KeyCode::Esc => {
+                self.clear_error();
+                self.mode = UiMode::Normal;
+                Ok(false)
+            }
+            KeyCode::Enter => {
+                let topic = if !value.is_empty() {
+                    value.clone()
+                } else if let Some(t) = matches.first().cloned() {
+                    t
+                } else {
+                    self.set_error("no topic selected".to_string());
+                    return Ok(true);
+                };
+                match self.start_timer_from_ui(topic) {
+                    Ok(true) => {}
+                    Ok(false) => return Ok(true),
+                    Err(error) => {
+                        self.set_error(format!("start failed: {error}"));
+                        return Ok(true);
+                    }
+                }
+                self.mode = UiMode::Normal;
+                Ok(false)
+            }
+            KeyCode::Up => {
+                let total_options = 1 + matches.len();
+                if total_options > 1 {
+                    if *selected_index == 0 {
+                        *selected_index = total_options - 1;
+                    } else {
+                        *selected_index -= 1;
+                    }
+                    if *selected_index == 0 {
+                        *value = search_query.clone();
+                    } else if let Some(topic) = matches.get(*selected_index - 1).cloned() {
+                        *value = topic;
+                    }
+                }
+                Ok(true)
+            }
+            KeyCode::Down => {
+                let total_options = 1 + matches.len();
+                if total_options > 1 {
+                    *selected_index = (*selected_index + 1) % total_options;
+                    if *selected_index == 0 {
+                        *value = search_query.clone();
+                    } else if let Some(topic) = matches.get(*selected_index - 1).cloned() {
+                        *value = topic;
+                    }
+                }
+                Ok(true)
+            }
+            KeyCode::Backspace => {
+                if !search_query.is_empty() {
+                    search_query.pop();
+                    *selected_index = 0;
+                    *value = search_query.clone();
+                }
+                Ok(true)
+            }
+            KeyCode::Char(c) => {
+                search_query.push(c);
+                *selected_index = 0;
+                *value = search_query.clone();
+                Ok(true)
+            }
+            _ => Ok(true),
+        }
+    }
+
+    fn get_matching_topics(&self, input: &str) -> Vec<String> {
+        let mut topics: Vec<String> = if input.is_empty() {
+            self.all_entries.iter().map(|e| e.topic.clone()).collect()
+        } else {
+            self.all_entries
+                .iter()
+                .filter(|e| topic_matches(input, &e.topic))
+                .map(|e| e.topic.clone())
+                .collect()
+        };
+        topics.sort();
+        topics.dedup();
+        topics
     }
 
     fn handle_stop_confirm_key(&mut self, code: KeyCode) -> Result<bool> {
@@ -656,6 +769,16 @@ impl App {
     }
 
     fn footer_notice_line(&self) -> Line<'_> {
+        if let UiMode::StartInput { search_query, .. } = &self.mode {
+            let matches = self.get_matching_topics(search_query);
+            if matches.is_empty() && !search_query.is_empty() {
+                return Line::from(vec![Span::styled(
+                    "no matching topics",
+                    Style::default().fg(Color::DarkGray),
+                )]);
+            }
+        }
+
         match &self.footer_notice {
             Some(FooterNotice {
                 kind: NoticeKind::Error,
@@ -946,7 +1069,7 @@ impl App {
 
     fn timer_title(&self) -> Line<'_> {
         match &self.mode {
-            UiMode::StartInput { value } => {
+            UiMode::StartInput { value, .. } => {
                 let mut spans = framed_label("Timer");
                 spans.extend(framed_prompt(
                     's',
