@@ -302,7 +302,7 @@ impl App {
                 if let Err(error) = self.reload() {
                     self.set_error(format!("reload failed: {error}"));
                 } else {
-                    self.set_info("reloaded".to_string());
+                    self.set_info("reloaded");
                 }
             }
             KeyCode::Char('f') => {
@@ -328,7 +328,7 @@ impl App {
                     if let Err(error) = self.apply_filter(String::new()) {
                         self.set_error(format!("clear topic filter failed: {error}"));
                     } else {
-                        self.set_info("topic filter cleared".to_string());
+                        self.set_info("topic filter cleared");
                     }
                 }
             }
@@ -338,7 +338,7 @@ impl App {
                     if let Err(error) = self.clear_range_filter() {
                         self.set_error(format!("clear range failed: {error}"));
                     } else {
-                        self.set_info("range cleared".to_string());
+                        self.set_info("range cleared");
                     }
                 }
             }
@@ -622,9 +622,9 @@ impl App {
             let stderr = String::from_utf8_lossy(&output.stderr);
             let msg = stderr.trim();
             self.set_error(if msg.is_empty() {
-                "failed to start timer".to_string()
+                "failed to start timer"
             } else {
-                msg.to_string()
+                msg
             });
             return Ok(false);
         }
@@ -634,18 +634,18 @@ impl App {
         Ok(true)
     }
 
-    fn set_error(&mut self, message: String) {
+    fn set_error(&mut self, message: impl Into<String>) {
         self.footer_notice = Some(FooterNotice {
             kind: NoticeKind::Error,
-            message,
+            message: message.into(),
         });
         self.next_status_refresh_ms = 0;
     }
 
-    fn set_info(&mut self, message: String) {
+    fn set_info(&mut self, message: impl Into<String>) {
         self.footer_notice = Some(FooterNotice {
             kind: NoticeKind::Info,
-            message,
+            message: message.into(),
         });
         self.next_status_refresh_ms = 0;
     }
@@ -727,13 +727,13 @@ impl App {
         match get_status() {
             Ok(status) if Status::from_u8(status.status) == Some(Status::Paused) => {
                 pause_resume_toggle_quiet(CMD_TOGGLE, "resumed", "resume")?;
-                Ok("resumed".to_string())
+                Ok("resumed".into())
             }
             Ok(_) => {
                 pause_resume_toggle_quiet(CMD_TOGGLE, "paused", "pause")?;
-                Ok("paused".to_string())
+                Ok("paused".into())
             }
-            Err(_) => Ok("toggle ignored: timer not running".to_string()),
+            Err(_) => Ok("toggle ignored: timer not running".into()),
         }
     }
 
