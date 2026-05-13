@@ -2,7 +2,7 @@ use std::{
     fs,
     io::{Cursor, Read, Write},
     os::unix::net::{UnixListener, UnixStream},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         Arc, Condvar, Mutex,
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -359,7 +359,7 @@ fn play_beep(output_stream: &Option<OutputStream>) {
 }
 
 fn execute_timer_finish_script(
-    script_path: Option<&PathBuf>,
+    script_path: Option<&Path>,
     topic: &str,
     duration_secs: u64,
     session_count: u64,
@@ -501,7 +501,7 @@ pub fn run_daemon(topic: String, interval_ms: u64, response_timeout: Option<u64>
         let duration_secs = interval_ms / MILLIS_PER_SECOND;
         let current_count = state.completed_count.fetch_add(1, Ordering::AcqRel) + 1;
         execute_timer_finish_script(
-            timer_finish_script.as_ref(),
+            timer_finish_script.as_deref(),
             &topic,
             duration_secs,
             current_count,
