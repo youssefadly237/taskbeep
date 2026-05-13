@@ -167,21 +167,21 @@ impl ResponseState {
 }
 
 pub struct TimerState {
-    pub running: Arc<AtomicBool>,
-    pub session_state: Arc<Mutex<SessionState>>,
-    pub response_state: Arc<Mutex<ResponseState>>,
-    pub response_condvar: Arc<Condvar>,
-    pub completed_count: Arc<AtomicU64>,
+    pub running: AtomicBool,
+    pub session_state: Mutex<SessionState>,
+    pub response_state: Mutex<ResponseState>,
+    pub response_condvar: Condvar,
+    pub completed_count: AtomicU64,
 }
 
 impl TimerState {
     pub fn new(start_ms: u64) -> Self {
         Self {
-            running: Arc::new(AtomicBool::new(true)),
-            session_state: Arc::new(Mutex::new(SessionState::new(start_ms))),
-            response_state: Arc::new(Mutex::new(ResponseState::new())),
-            response_condvar: Arc::new(Condvar::new()),
-            completed_count: Arc::new(AtomicU64::new(0)),
+            running: AtomicBool::new(true),
+            session_state: Mutex::new(SessionState::new(start_ms)),
+            response_state: Mutex::new(ResponseState::new()),
+            response_condvar: Condvar::new(),
+            completed_count: AtomicU64::new(0),
         }
     }
 }
@@ -347,7 +347,7 @@ fn socket_handler(listener: UnixListener, state: Arc<TimerState>, topic: String,
     }
 }
 
-fn play_beep(output_stream: &Option<Arc<OutputStream>>) {
+fn play_beep(output_stream: &Option<OutputStream>) {
     if let Some(stream) = output_stream {
         let cursor = Cursor::new(crate::get_audio_data());
         if let Ok(source) = Decoder::new(cursor) {
@@ -436,11 +436,10 @@ pub fn run_daemon(topic: String, interval_ms: u64, response_timeout: Option<u64>
         .unwrap_or(config.response_timeout_secs);
 
     {
-        let running = state.running.clone();
-        let response_condvar = state.response_condvar.clone();
+        let state = state.clone();
         let _ = ctrlc::set_handler(move || {
-            running.store(false, Ordering::Release);
-            response_condvar.notify_all();
+            state.running.store(false, Ordering::Release);
+            state.response_condvar.notify_all();
         });
     }
 
@@ -453,7 +452,7 @@ pub fn run_daemon(topic: String, interval_ms: u64, response_timeout: Option<u64>
     }
 
     let audio_stream = match OutputStreamBuilder::open_default_stream() {
-        Ok(stream) => Some(Arc::new(stream)),
+        Ok(stream) => Some(stream),
         Err(e) => {
             eprintln!("Warning: No audio available: {}", e);
             None
