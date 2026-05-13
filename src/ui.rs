@@ -667,7 +667,7 @@ impl App {
                         .fg(Color::LightRed)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(message.clone(), Style::default().fg(Color::LightRed)),
+                Span::styled(message.as_str(), Style::default().fg(Color::LightRed)),
             ]),
             Some(FooterNotice {
                 kind: NoticeKind::Info,
@@ -679,14 +679,14 @@ impl App {
                         .fg(Color::LightCyan)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(message.clone(), Style::default().fg(Color::LightCyan)),
+                Span::styled(message.as_str(), Style::default().fg(Color::LightCyan)),
             ]),
             None => Line::raw(""),
         }
     }
 
     fn footer_state_line(&self) -> Line<'_> {
-        Line::raw(self.timer.state_line.clone())
+        Line::raw(self.timer.state_line.as_str())
     }
 
     fn footer_state_width(&self) -> u16 {
@@ -993,14 +993,13 @@ impl App {
     }
 
     fn heatmap_title(&self) -> Line<'_> {
-        let heatmap_label = self.model.title.clone();
         match &self.mode {
             UiMode::RangeInput {
                 start,
                 end,
                 editing_end,
             } => {
-                let mut spans = framed_label(&heatmap_label);
+                let mut spans = framed_label(&self.model.title);
                 let body = if *editing_end {
                     format!(" {} .. [{}] ", start, end)
                 } else {
@@ -1016,7 +1015,7 @@ impl App {
                 Line::from(spans)
             }
             UiMode::FilterInput { value } => {
-                let mut spans = framed_label(&heatmap_label);
+                let mut spans = framed_label(&self.model.title);
                 spans.extend(framed_prompt(
                     'f',
                     format!(" {} ", value),
@@ -1025,7 +1024,7 @@ impl App {
                 Line::from(spans)
             }
             _ => {
-                let mut spans = framed_label(&heatmap_label);
+                let mut spans = framed_label(&self.model.title);
                 if let Some(topic) = &self.topic_filter {
                     spans.extend(vec![
                         frame_left(),
