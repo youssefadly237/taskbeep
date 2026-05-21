@@ -1,5 +1,6 @@
 mod audio;
 mod commands;
+mod completions;
 mod config;
 mod error;
 mod heatmap;
@@ -10,7 +11,8 @@ mod timer;
 mod ui;
 mod utils;
 
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
+use clap_complete::engine::ArgValueCompleter;
 use config::Config;
 use std::{path::PathBuf, sync::OnceLock};
 
@@ -60,6 +62,7 @@ enum Commands {
     /// Start a Pomodoro timer with a topic and interval in seconds (configurable default)
     Start {
         /// The topic/task you're working on
+        #[arg(add = ArgValueCompleter::new(completions::topic_completer))]
         topic: String,
         /// Interval in seconds (default from config or 1500s/25 minutes)
         interval: Option<u64>,
@@ -67,31 +70,39 @@ enum Commands {
         #[arg(long)]
         response_timeout: Option<u64>,
     },
-    /// Stop and end the timer process
-    Stop {
-        /// Mark the stopped session as working time
-        #[arg(long, conflicts_with = "wasting")]
-        working: bool,
-        /// Mark the stopped session as wasting time
-        #[arg(long, conflicts_with = "working")]
-        wasting: bool,
+    /// Clear statistics (all or for a specific topic)
+    Clear {
+        /// Optional topic to delete (if omitted, deletes all statistics)
+        topic: Option<String>,
+        /// Skip confirmation prompt
+        #[arg(short, long)]
+        yes: bool,
+    },
+    /// Generate static shell completion scripts (no runtime topic list)
+    Completions {
+        /// Shell to generate completions for
+        #[arg(value_name = "SHELL")]
+        shell: clap_complete::Shell,
+    },
+    /// Manage configuration (show settings, view path, or reset to defaults)
+    Config {
+        /// Show the path to the config file
+        #[arg(long)]
+        path: bool,
+        /// Reset configuration to defaults
+        #[arg(long)]
+        reset: bool,
+    },
+    /// Export statistics to a file (default: ./taskbeep_stats.tsv)
+    Export {
+        /// Output file path
+        #[arg(default_value = "taskbeep_stats.tsv")]
+        output: PathBuf,
     },
     /// Pause the timer temporarily
     Pause,
     /// Resume the paused timer
     Resume,
-    /// Toggle between pause and resume
-    Toggle,
-    /// Show current timer status
-    Status {
-        /// Output format: human (default), json, or plain
-        #[arg(short, long, default_value = "human")]
-        format: String,
-    },
-    /// Signal that you were working on the topic
-    Working,
-    /// Signal that you were wasting time
-    Wasting,
     /// Show productivity statistics
     Stats {
         /// Only show stats for this topic
@@ -115,34 +126,34 @@ enum Commands {
         #[arg(long)]
         heatmap: bool,
     },
+    /// Show current timer status
+    Status {
+        /// Output format: human (default), json, or plain
+        #[arg(short, long, default_value = "human")]
+        format: String,
+    },
+    /// Stop and end the timer process
+    Stop {
+        /// Mark the stopped session as working time
+        #[arg(long, conflicts_with = "wasting")]
+        working: bool,
+        /// Mark the stopped session as wasting time
+        #[arg(long, conflicts_with = "working")]
+        wasting: bool,
+    },
+    /// Toggle between pause and resume
+    Toggle,
     /// Open interactive one-page terminal UI
     Ui,
-    /// Export statistics to a file (default: ./taskbeep_stats.tsv)
-    Export {
-        /// Output file path
-        #[arg(default_value = "taskbeep_stats.tsv")]
-        output: PathBuf,
-    },
-    /// Clear statistics (all or for a specific topic)
-    Clear {
-        /// Optional topic to delete (if omitted, deletes all statistics)
-        topic: Option<String>,
-        /// Skip confirmation prompt
-        #[arg(short, long)]
-        yes: bool,
-    },
-    /// Manage configuration (show settings, view path, or reset to defaults)
-    Config {
-        /// Show the path to the config file
-        #[arg(long)]
-        path: bool,
-        /// Reset configuration to defaults
-        #[arg(long)]
-        reset: bool,
-    },
+    /// Signal that you were wasting time
+    Wasting,
+    /// Signal that you were working on the topic
+    Working,
 }
 
 fn main() {
+    completions::configure_completions();
+
     let cli = Cli::parse();
 
     let result = match cli.command {
@@ -233,6 +244,15 @@ fn main() {
                 );
                 Ok(())
             }
+        }
+        Commands::Completions { shell } => {
+            clap_complete::aot::generate(
+                shell,
+                &mut Cli::command(),
+                "taskbeep",
+                &mut std::io::stdout(),
+            );
+            Ok(())
         }
     };
 
