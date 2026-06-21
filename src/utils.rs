@@ -38,8 +38,8 @@ pub enum HeatmapAccent {
 
 impl HeatmapAccent {
     pub fn from_env() -> Self {
-        match env::var("TASKBEEP_HEATMAP_ACCENT") {
-            Ok(value) => match value.trim().to_ascii_lowercase().as_str() {
+        env::var("TASKBEEP_HEATMAP_ACCENT").map_or(Self::Green, |value| {
+            match value.trim().to_ascii_lowercase().as_str() {
                 "red" => Self::Red,
                 "yellow" => Self::Yellow,
                 "blue" => Self::Blue,
@@ -47,12 +47,11 @@ impl HeatmapAccent {
                 "cyan" => Self::Cyan,
                 "white" => Self::White,
                 _ => Self::Green,
-            },
-            Err(_) => Self::Green,
-        }
+            }
+        })
     }
 
-    pub fn base_ansi_code(self) -> u8 {
+    pub const fn base_ansi_code(self) -> u8 {
         match self {
             Self::Red => 31,
             Self::Green => 32,
@@ -64,7 +63,7 @@ impl HeatmapAccent {
         }
     }
 
-    pub fn bright_ansi_code(self) -> u8 {
+    pub const fn bright_ansi_code(self) -> u8 {
         match self {
             Self::Red => 91,
             Self::Green => 92,
@@ -77,7 +76,7 @@ impl HeatmapAccent {
     }
 
     #[cfg(feature = "ui")]
-    pub fn base_ui_color(self) -> ratatui::style::Color {
+    pub const fn base_ui_color(self) -> ratatui::style::Color {
         match self {
             Self::Red => ratatui::style::Color::Red,
             Self::Green => ratatui::style::Color::Green,
@@ -90,7 +89,7 @@ impl HeatmapAccent {
     }
 
     #[cfg(feature = "ui")]
-    pub fn bright_ui_color(self) -> ratatui::style::Color {
+    pub const fn bright_ui_color(self) -> ratatui::style::Color {
         match self {
             Self::Red => ratatui::style::Color::LightRed,
             Self::Green => ratatui::style::Color::LightGreen,
@@ -123,24 +122,24 @@ impl std::fmt::Display for DurationDisplay {
         let m = (secs % SECONDS_PER_HOUR) / SECONDS_PER_MINUTE;
         let s = secs % SECONDS_PER_MINUTE;
 
-        let mut first = true;
-
-        if h > 0 {
-            write!(f, "{}h", h)?;
-            first = false;
-        }
+        let mut first = if h > 0 {
+            write!(f, "{h}h")?;
+            false
+        } else {
+            true
+        };
         if m > 0 {
             if !first {
                 write!(f, " ")?;
             }
-            write!(f, "{}m", m)?;
+            write!(f, "{m}m")?;
             first = false;
         }
         if s > 0 || first {
             if !first {
                 write!(f, " ")?;
             }
-            write!(f, "{}s", s)?;
+            write!(f, "{s}s")?;
         }
 
         Ok(())
@@ -153,9 +152,7 @@ pub fn format_duration(ms: u64) -> String {
 }
 
 pub fn get_runtime_dir() -> PathBuf {
-    std::env::var_os("XDG_RUNTIME_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir)
+    std::env::var_os("XDG_RUNTIME_DIR").map_or_else(std::env::temp_dir, PathBuf::from)
 }
 
 pub fn socket_path() -> PathBuf {
@@ -163,11 +160,10 @@ pub fn socket_path() -> PathBuf {
 }
 
 pub fn statsfile_path() -> PathBuf {
-    if let Some(home) = std::env::var_os("HOME") {
-        PathBuf::from(home).join(STATS_FILE_NAME)
-    } else {
-        get_runtime_dir().join(STATS_FILE_NAME)
-    }
+    std::env::var_os("HOME").map_or_else(
+        || get_runtime_dir().join(STATS_FILE_NAME),
+        |home| PathBuf::from(home).join(STATS_FILE_NAME),
+    )
 }
 
 pub fn validate_topic(topic: &str) -> Result<String> {
@@ -178,8 +174,7 @@ pub fn validate_topic(topic: &str) -> Result<String> {
     }
     if topic.len() > MAX_TOPIC_LEN {
         return Err(TaskBeepError::ConfigError(format!(
-            "Topic too long (max {} characters)",
-            MAX_TOPIC_LEN
+            "Topic too long (max {MAX_TOPIC_LEN} characters)"
         )));
     }
     if topic.contains(&['\0', '\n', '\r', '\t'][..]) {
@@ -193,21 +188,19 @@ pub fn validate_topic(topic: &str) -> Result<String> {
 pub fn validate_interval(interval: u64) -> Result<u64> {
     if interval < MIN_INTERVAL_SECS {
         return Err(TaskBeepError::ConfigError(format!(
-            "Interval too short (min {}s)",
-            MIN_INTERVAL_SECS
+            "Interval too short (min {MIN_INTERVAL_SECS}s)"
         )));
     }
     if interval > MAX_INTERVAL_SECS {
         return Err(TaskBeepError::ConfigError(format!(
-            "Interval too long (max {}s)",
-            MAX_INTERVAL_SECS
+            "Interval too long (max {MAX_INTERVAL_SECS}s)"
         )));
     }
     Ok(interval)
 }
 
 pub fn confirm(prompt: &str) -> Result<bool> {
-    print!("{}", prompt);
+    print!("{prompt}");
     io::stdout().flush()?;
     let mut input = String::new();
     io::stdin().read_line(&mut input)?;
@@ -215,8 +208,8 @@ pub fn confirm(prompt: &str) -> Result<bool> {
 }
 
 pub fn local_date_from_ms(timestamp_ms: u64, offset: UtcOffset) -> Result<Date> {
-    let timestamp_ns = i128::from(timestamp_ms) * 1_000_000;
-    let datetime = OffsetDateTime::from_unix_timestamp_nanos(timestamp_ns).map_err(|error| {
+    let ns = i128::from(timestamp_ms) * 1_000_000;
+    let datetime = OffsetDateTime::from_unix_timestamp_nanos(ns).map_err(|error| {
         TaskBeepError::StatsError(format!("invalid stats timestamp {timestamp_ms}: {error}"))
     })?;
     Ok(datetime.to_offset(offset).date())
@@ -227,7 +220,7 @@ pub fn current_local_date() -> Date {
     OffsetDateTime::now_utc().to_offset(offset).date()
 }
 
-pub fn month_abbrev(month: Month) -> &'static str {
+pub const fn month_abbrev(month: Month) -> &'static str {
     match month {
         Month::January => "Jan",
         Month::February => "Feb",
@@ -289,7 +282,7 @@ pub fn month_label_chars(
     chars.into_iter().collect()
 }
 
-pub fn day_label(row: usize) -> &'static str {
+pub const fn day_label(row: usize) -> &'static str {
     match row {
         0 => "Su  ",
         1 => "Mo  ",
@@ -302,7 +295,7 @@ pub fn day_label(row: usize) -> &'static str {
 }
 
 #[cfg(feature = "ui")]
-pub fn weekday_abbrev(weekday: time::Weekday) -> &'static str {
+pub const fn weekday_abbrev(weekday: time::Weekday) -> &'static str {
     match weekday {
         time::Weekday::Monday => "Mon",
         time::Weekday::Tuesday => "Tue",
@@ -321,17 +314,18 @@ pub fn weekday_abbrev(weekday: time::Weekday) -> &'static str {
 /// - `glob*`   — contains `*` or `?` -> case-insensitive glob match
 /// - `substr`  — otherwise -> case-insensitive substring match
 pub fn topic_matches(pattern: &str, topic: &str) -> bool {
-    if let Some(exact) = pattern.strip_prefix('=') {
-        topic == exact
-    } else {
-        let pat = pattern.to_lowercase();
-        let text = topic.to_lowercase();
-        if pat.contains('*') || pat.contains('?') {
-            wildcard_match(&pat, &text)
-        } else {
-            text.contains(pat.as_str())
-        }
-    }
+    pattern.strip_prefix('=').map_or_else(
+        || {
+            let pat = pattern.to_lowercase();
+            let text = topic.to_lowercase();
+            if pat.contains('*') || pat.contains('?') {
+                wildcard_match(&pat, &text)
+            } else {
+                text.contains(pat.as_str())
+            }
+        },
+        |exact| topic == exact,
+    )
 }
 
 /// Classic DP wildcard matcher: `*` matches any sequence, `?` matches one char.
@@ -358,15 +352,15 @@ fn wildcard_match(pat: &str, text: &str) -> bool {
     dp[m][n]
 }
 
-/// Heatmap intensity level (0–HEATMAP_LEVELS) from working ms and maximum ms.
+/// Heatmap intensity level (`0–HEATMAP_LEVELS`) from working ms and maximum ms.
 /// Uses sqrt normalisation so mid-range values stay visible.
 pub fn heatmap_intensity(working_ms: u64, max_working_ms: u64) -> u8 {
     if working_ms == 0 || max_working_ms == 0 {
         return 0;
     }
     let normalized = (working_ms as f64 / max_working_ms as f64).sqrt();
-    let scaled = (normalized * HEATMAP_LEVELS as f64).ceil();
-    scaled.clamp(1.0, HEATMAP_LEVELS as f64) as u8
+    let scaled = (normalized * f64::from(HEATMAP_LEVELS)).ceil();
+    scaled.clamp(1.0, f64::from(HEATMAP_LEVELS)) as u8
 }
 
 /// Shared heatmap cell-level selection for both CLI and TUI renderers.
@@ -384,7 +378,7 @@ pub fn heatmap_legend_levels(max_working_ms: u64) -> [u8; (HEATMAP_LEVELS as usi
         let working_ms = if level == 0 {
             0
         } else {
-            let fraction = level as f64 / HEATMAP_LEVELS as f64;
+            let fraction = f64::from(level) / f64::from(HEATMAP_LEVELS);
             (max_working_ms as f64 * fraction * fraction).round() as u64
         };
         levels[level as usize] = heatmap_intensity(working_ms, max_working_ms);

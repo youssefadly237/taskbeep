@@ -19,7 +19,7 @@ struct AppWidget<'a> {
 }
 
 impl<'a> AppWidget<'a> {
-    fn new(app: &'a App) -> Self {
+    const fn new(app: &'a App) -> Self {
         Self { app }
     }
 }
@@ -53,7 +53,7 @@ struct TimerWidget<'a> {
 }
 
 impl<'a> TimerWidget<'a> {
-    fn new(app: &'a App) -> Self {
+    const fn new(app: &'a App) -> Self {
         Self { app }
     }
 }
@@ -82,7 +82,7 @@ struct LeftBodyWidget<'a> {
 }
 
 impl<'a> LeftBodyWidget<'a> {
-    fn new(app: &'a App) -> Self {
+    const fn new(app: &'a App) -> Self {
         Self { app }
     }
 }
@@ -112,7 +112,7 @@ struct HeatmapWidget<'a> {
 }
 
 impl<'a> HeatmapWidget<'a> {
-    fn new(app: &'a App) -> Self {
+    const fn new(app: &'a App) -> Self {
         Self { app }
     }
 }
@@ -234,7 +234,7 @@ struct ChartWidget<'a> {
 }
 
 impl<'a> ChartWidget<'a> {
-    fn new(app: &'a App) -> Self {
+    const fn new(app: &'a App) -> Self {
         Self {
             app,
             block: None,
@@ -247,7 +247,7 @@ impl<'a> ChartWidget<'a> {
         self
     }
 
-    fn legend_height(mut self, rows: u16) -> Self {
+    const fn legend_height(mut self, rows: u16) -> Self {
         self.legend_height = rows;
         self
     }
@@ -311,7 +311,7 @@ struct RightBodyWidget<'a> {
 }
 
 impl<'a> RightBodyWidget<'a> {
-    fn new(app: &'a App) -> Self {
+    const fn new(app: &'a App) -> Self {
         Self { app }
     }
 }
@@ -348,7 +348,7 @@ struct FooterWidget<'a> {
 }
 
 impl<'a> FooterWidget<'a> {
-    fn new(app: &'a App) -> Self {
+    const fn new(app: &'a App) -> Self {
         Self { app }
     }
 }

@@ -52,28 +52,28 @@ pub struct Config {
     pub on_timer_finish: Option<String>,
 }
 
-fn default_session_duration() -> u64 {
+const fn default_session_duration() -> u64 {
     DEFAULT_SESSION_DURATION
 }
-fn default_volume() -> f32 {
+const fn default_volume() -> f32 {
     DEFAULT_VOLUME
 }
-fn default_beep_frequency() -> f32 {
+const fn default_beep_frequency() -> f32 {
     DEFAULT_BEEP_FREQUENCY
 }
-fn default_first_beep_duration() -> f32 {
+const fn default_first_beep_duration() -> f32 {
     DEFAULT_FIRST_BEEP_DURATION
 }
-fn default_second_beep_duration() -> f32 {
+const fn default_second_beep_duration() -> f32 {
     DEFAULT_SECOND_BEEP_DURATION
 }
-fn default_gap_duration() -> f32 {
+const fn default_gap_duration() -> f32 {
     DEFAULT_GAP_DURATION
 }
-fn default_pause_duration() -> f32 {
+const fn default_pause_duration() -> f32 {
     DEFAULT_PAUSE_DURATION
 }
-fn default_response_timeout_secs() -> Option<u64> {
+const fn default_response_timeout_secs() -> Option<u64> {
     Some(DEFAULT_RESPONSE_TIMEOUT_SECS)
 }
 
@@ -145,8 +145,7 @@ impl Config {
             // Check if file exists
             if !path.exists() {
                 return Err(format!(
-                    "on_timer_finish script does not exist: {}",
-                    script_path
+                    "on_timer_finish script does not exist: {script_path}"
                 ));
             }
 
@@ -156,14 +155,13 @@ impl Config {
                 use std::os::unix::fs::PermissionsExt;
 
                 let metadata = std::fs::metadata(&path)
-                    .map_err(|e| format!("Cannot read script metadata: {}", e))?;
+                    .map_err(|e| format!("Cannot read script metadata: {e}"))?;
 
                 let mode = metadata.permissions().mode();
 
                 if mode & 0o111 == 0 {
                     return Err(format!(
-                        "on_timer_finish script is not executable: {}",
-                        script_path
+                        "on_timer_finish script is not executable: {script_path}"
                     ));
                 }
             }
@@ -191,26 +189,26 @@ impl Config {
         let config_path = Self::config_path();
 
         if let Ok(contents) = fs::read_to_string(&config_path) {
-            match toml::from_str::<Config>(&contents) {
+            match toml::from_str::<Self>(&contents) {
                 Ok(config) => {
                     if let Err(e) = config.validate() {
-                        eprintln!("Warning: Invalid config: {}", e);
+                        eprintln!("Warning: Invalid config: {e}");
                         eprintln!("Using default configuration");
-                        Config::default()
+                        Self::default()
                     } else {
                         config
                     }
                 }
                 Err(e) => {
-                    eprintln!("Warning: Failed to parse config file: {}", e);
+                    eprintln!("Warning: Failed to parse config file: {e}");
                     eprintln!("Using default configuration");
-                    Config::default()
+                    Self::default()
                 }
             }
         } else {
-            let config = Config::default();
+            let config = Self::default();
             if let Err(e) = config.create_default_file() {
-                eprintln!("Warning: Failed to create default config file: {}", e);
+                eprintln!("Warning: Failed to create default config file: {e}");
             }
             config
         }
@@ -229,7 +227,7 @@ impl Config {
     }
 
     pub fn reset() -> std::io::Result<()> {
-        let config = Config::default();
+        let config = Self::default();
         config.create_default_file()
     }
 }

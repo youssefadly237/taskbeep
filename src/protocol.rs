@@ -30,16 +30,16 @@ pub enum Status {
 }
 
 impl Status {
-    pub fn from_u8(value: u8) -> Option<Self> {
+    pub const fn from_u8(value: u8) -> Option<Self> {
         match value {
-            0x01 => Some(Status::Running),
-            0x02 => Some(Status::Paused),
-            0x03 => Some(Status::Waiting),
+            0x01 => Some(Self::Running),
+            0x02 => Some(Self::Paused),
+            0x03 => Some(Self::Waiting),
             _ => None,
         }
     }
 
-    pub fn as_u8(self) -> u8 {
+    pub const fn as_u8(self) -> u8 {
         self as u8
     }
 }
@@ -82,7 +82,7 @@ impl StatusResponse {
         if bytes.len() < 1 + topic_len + 8 * 6 + 1 {
             return Err(TaskBeepError::SocketError("Response too short".to_string()));
         }
-        let topic = String::from_utf8_lossy(&bytes[1..1 + topic_len]).to_string();
+        let topic = String::from_utf8_lossy(&bytes[1..=topic_len]).to_string();
         let mut pos = 1 + topic_len;
 
         let count = u64::from_le_bytes(bytes[pos..pos + 8].try_into()?);
@@ -99,7 +99,7 @@ impl StatusResponse {
         pos += 8;
         let pause_count = u64::from_le_bytes(bytes[pos..pos + 8].try_into()?);
 
-        Ok(StatusResponse {
+        Ok(Self {
             topic,
             count,
             session_start_ms,

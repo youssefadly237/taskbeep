@@ -77,7 +77,7 @@ impl StatsEntry {
             return None;
         }
 
-        Some(StatsEntry {
+        Some(Self {
             start_time_ms,
             end_time_ms,
             duration_ms,
@@ -88,7 +88,7 @@ impl StatsEntry {
         })
     }
 
-    pub fn duration_ms(&self) -> u64 {
+    pub const fn duration_ms(&self) -> u64 {
         self.duration_ms
     }
 }
@@ -142,7 +142,7 @@ fn range_from_period(unit: PeriodUnit, spec: Option<&str>, today: Date) -> Resul
                 (
                     start,
                     end_exclusive,
-                    format!(" (Day {}..{})", newest_shift, oldest_shift),
+                    format!(" (Day {newest_shift}..{oldest_shift})"),
                 )
             }
             PeriodUnit::Week => {
@@ -153,7 +153,7 @@ fn range_from_period(unit: PeriodUnit, spec: Option<&str>, today: Date) -> Resul
                 (
                     start,
                     end_exclusive,
-                    format!(" (Week {}..{})", newest_shift, oldest_shift),
+                    format!(" (Week {newest_shift}..{oldest_shift})"),
                 )
             }
             PeriodUnit::Month => {
@@ -170,7 +170,7 @@ fn range_from_period(unit: PeriodUnit, spec: Option<&str>, today: Date) -> Resul
                 (
                     start,
                     end_exclusive,
-                    format!(" (Month {}..{})", newest_shift, oldest_shift),
+                    format!(" (Month {newest_shift}..{oldest_shift})"),
                 )
             }
             PeriodUnit::Year => {
@@ -183,7 +183,7 @@ fn range_from_period(unit: PeriodUnit, spec: Option<&str>, today: Date) -> Resul
                 (
                     start,
                     end_exclusive,
-                    format!(" (Year {}..{})", newest_shift, oldest_shift),
+                    format!(" (Year {newest_shift}..{oldest_shift})"),
                 )
             }
         };
@@ -205,8 +205,7 @@ fn range_from_period(unit: PeriodUnit, spec: Option<&str>, today: Date) -> Resul
 
     let shift = parse_shift_spec(spec).ok_or_else(|| {
         TaskBeepError::StatsError(format!(
-            "invalid period offset '{}': expected 0, ^, or ~N",
-            spec
+            "invalid period offset '{spec}': expected 0, ^, or ~N"
         ))
     })?;
 
@@ -219,7 +218,7 @@ fn range_from_period(unit: PeriodUnit, spec: Option<&str>, today: Date) -> Resul
             } else if shift == 1 {
                 " (Yesterday)".to_string()
             } else {
-                format!(" ({} Days Ago)", shift)
+                format!(" ({shift} Days Ago)")
             };
             (target_day, Some(end), label)
         }
@@ -232,7 +231,7 @@ fn range_from_period(unit: PeriodUnit, spec: Option<&str>, today: Date) -> Resul
             } else if shift == 1 {
                 " (Last Week)".to_string()
             } else {
-                format!(" ({} Weeks Ago)", shift)
+                format!(" ({shift} Weeks Ago)")
             };
             (target_week_start, Some(end), label)
         }
@@ -251,7 +250,7 @@ fn range_from_period(unit: PeriodUnit, spec: Option<&str>, today: Date) -> Resul
             } else if shift == 1 {
                 " (Last Month)".to_string()
             } else {
-                format!(" ({} Months Ago)", shift)
+                format!(" ({shift} Months Ago)")
             };
             (target_month_start, Some(end), label)
         }
@@ -266,7 +265,7 @@ fn range_from_period(unit: PeriodUnit, spec: Option<&str>, today: Date) -> Resul
             } else if shift == 1 {
                 " (Last Year)".to_string()
             } else {
-                format!(" ({} Years Ago)", shift)
+                format!(" ({shift} Years Ago)")
             };
             (start, Some(end), label)
         }
@@ -310,8 +309,7 @@ fn range_from_year_value(year_spec: &str, today: Date) -> Result<StatsFilter> {
 
     let year: i32 = year_spec.parse().map_err(|_| {
         TaskBeepError::StatsError(format!(
-            "invalid year '{}': expected a year number, ^, or ~N",
-            year_spec
+            "invalid year '{year_spec}': expected a year number, ^, or ~N"
         ))
     })?;
     let start = Date::from_calendar_date(year, Month::January, 1)
@@ -443,21 +441,19 @@ fn validate_heatmap_window(filter: &StatsFilter, today: Date) -> Result<()> {
     let span_days = (end_ms - start_ms).div_ceil(MILLIS_PER_DAY);
     if span_days < HEATMAP_MIN_DAYS {
         return Err(TaskBeepError::StatsError(format!(
-            "heatmap range is too short: minimum is {} days",
-            HEATMAP_MIN_DAYS
+            "heatmap range is too short: minimum is {HEATMAP_MIN_DAYS} days"
         )));
     }
     if span_days > HEATMAP_MAX_DAYS {
         return Err(TaskBeepError::StatsError(format!(
-            "heatmap range is too long: maximum is {} days",
-            HEATMAP_MAX_DAYS
+            "heatmap range is too long: maximum is {HEATMAP_MAX_DAYS} days"
         )));
     }
 
     Ok(())
 }
 
-fn has_any_period_filter(
+const fn has_any_period_filter(
     day: Option<&str>,
     week: Option<&str>,
     month: Option<&str>,
@@ -580,7 +576,7 @@ pub fn show_stats(
     let total_ms = total_working_ms + total_wasting_ms;
     let productivity = (total_working_ms as f64 / total_ms as f64) * 100.0;
 
-    let topic_label = topic.map(|t| format!(" [{}]", t)).unwrap_or_default();
+    let topic_label = topic.map(|t| format!(" [{t}]")).unwrap_or_default();
 
     println!(
         "=== Productivity Statistics{}{} ===",
@@ -589,7 +585,7 @@ pub fn show_stats(
     println!("Total time: {}", DurationDisplay(total_ms));
     println!("Working: {}", DurationDisplay(total_working_ms));
     println!("Wasting: {}", DurationDisplay(total_wasting_ms));
-    println!("Productivity: {:.1}%", productivity);
+    println!("Productivity: {productivity:.1}%");
     if total_pause_count > 0 {
         println!(
             "Total pauses: {} ({} paused)",
@@ -680,13 +676,13 @@ pub fn clear_stats(topic: Option<String>, skip_confirmation: bool) -> Result<()>
         }
 
         if matching_entries.is_empty() {
-            println!("No statistics found matching '{}'", topic_name);
+            println!("No statistics found matching '{topic_name}'");
             if !all_topics.is_empty() {
                 println!("\nAvailable topics:");
                 let mut sorted_topics: Vec<_> = all_topics.iter().collect();
                 sorted_topics.sort();
                 for t in sorted_topics {
-                    println!("  {}", t);
+                    println!("  {t}");
                 }
             }
             return Ok(());

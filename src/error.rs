@@ -27,19 +27,19 @@ pub enum TaskBeepError {
 
 impl From<String> for TaskBeepError {
     fn from(s: String) -> Self {
-        TaskBeepError::Generic(s)
+        Self::Generic(s)
     }
 }
 
 impl From<&str> for TaskBeepError {
     fn from(s: &str) -> Self {
-        TaskBeepError::Generic(s.to_string())
+        Self::Generic(s.to_string())
     }
 }
 
 impl From<std::array::TryFromSliceError> for TaskBeepError {
     fn from(e: std::array::TryFromSliceError) -> Self {
-        TaskBeepError::ParseError(e.to_string())
+        Self::ParseError(e.to_string())
     }
 }
 

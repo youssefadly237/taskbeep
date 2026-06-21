@@ -2,7 +2,7 @@ pub const TIMER_FONT_HEIGHT: usize = 7;
 
 pub type TimerGlyph = [&'static str; TIMER_FONT_HEIGHT];
 
-pub fn timer_font_glyph(ch: char) -> TimerGlyph {
+pub const fn timer_font_glyph(ch: char) -> TimerGlyph {
     match ch {
         '0' => [
             "  ░████  ",

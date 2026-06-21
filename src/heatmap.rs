@@ -269,7 +269,7 @@ fn plain_cell(level: u8) -> String {
         3 => '▓',
         _ => '█',
     };
-    format!("{} ", glyph)
+    format!("{glyph} ")
 }
 
 fn ansi_cell(level: u8, accent: HeatmapAccent) -> String {

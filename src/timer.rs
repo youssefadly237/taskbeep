@@ -31,7 +31,7 @@ pub struct PauseState {
 }
 
 impl PauseState {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             paused_at_ms: None,
             total_paused_ms: 0,
@@ -39,17 +39,17 @@ impl PauseState {
         }
     }
 
-    pub fn is_paused(&self) -> bool {
+    pub const fn is_paused(&self) -> bool {
         self.paused_at_ms.is_some()
     }
 
-    pub fn pause(&mut self, now: u64) {
+    pub const fn pause(&mut self, now: u64) {
         if self.paused_at_ms.is_none() {
             self.paused_at_ms = Some(now);
         }
     }
 
-    pub fn resume(&mut self, now: u64) {
+    pub const fn resume(&mut self, now: u64) {
         if let Some(paused_at) = self.paused_at_ms {
             let pause_duration = now.saturating_sub(paused_at);
             self.total_paused_ms += pause_duration;
@@ -62,11 +62,11 @@ impl PauseState {
         self.paused_at_ms.unwrap_or(0)
     }
 
-    pub fn get_total_paused(&self) -> u64 {
+    pub const fn get_total_paused(&self) -> u64 {
         self.total_paused_ms
     }
 
-    pub fn get_pause_count(&self) -> u64 {
+    pub const fn get_pause_count(&self) -> u64 {
         self.pause_count
     }
 }
@@ -90,7 +90,7 @@ impl SessionState {
         }
     }
 
-    pub fn pause(&mut self, now_ms: u64, now_instant: Instant) {
+    pub const fn pause(&mut self, now_ms: u64, now_instant: Instant) {
         if self.paused_at_instant.is_none() {
             self.paused_at_instant = Some(now_instant);
         }
@@ -122,7 +122,7 @@ pub struct ResponseState {
 }
 
 impl ResponseState {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             waiting: false,
             response: None,
@@ -131,7 +131,7 @@ impl ResponseState {
     }
 
     // Returns true if the response was accepted (only accepted while waiting).
-    pub fn try_respond(&mut self, was_working: bool) -> bool {
+    pub const fn try_respond(&mut self, was_working: bool) -> bool {
         if self.waiting {
             self.response = Some(was_working);
             true
@@ -140,28 +140,28 @@ impl ResponseState {
         }
     }
 
-    pub fn start_waiting(&mut self) {
+    pub const fn start_waiting(&mut self) {
         self.waiting = true;
         self.response = None;
     }
 
-    pub fn stop_waiting(&mut self) {
+    pub const fn stop_waiting(&mut self) {
         self.waiting = false;
     }
 
-    pub fn is_waiting(&self) -> bool {
+    pub const fn is_waiting(&self) -> bool {
         self.waiting
     }
 
-    pub fn take_response(&mut self) -> Option<bool> {
+    pub const fn take_response(&mut self) -> Option<bool> {
         self.response.take()
     }
 
-    pub fn notify_pause_change(&mut self) {
+    pub const fn notify_pause_change(&mut self) {
         self.pause_changed = true;
     }
 
-    pub fn clear_pause_flag(&mut self) {
+    pub const fn clear_pause_flag(&mut self) {
         self.pause_changed = false;
     }
 }
@@ -188,12 +188,9 @@ impl TimerState {
 
 fn socket_handler(listener: UnixListener, state: Arc<TimerState>, topic: String, interval_ms: u64) {
     while state.running.load(Ordering::Acquire) {
-        let (mut stream, _) = match listener.accept() {
-            Ok(conn) => conn,
-            Err(_) => {
-                thread::sleep(Duration::from_millis(50));
-                continue;
-            }
+        let Ok((mut stream, _)) = listener.accept() else {
+            thread::sleep(Duration::from_millis(50));
+            continue;
         };
 
         let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
@@ -420,7 +417,7 @@ pub fn run_daemon(topic: String, interval_ms: u64, response_timeout: Option<u64>
     let listener = match try_bind_socket() {
         Ok(l) => l,
         Err(e) => {
-            eprintln!("Failed to start daemon: {}", e);
+            eprintln!("Failed to start daemon: {e}");
             std::process::exit(1);
         }
     };
@@ -431,9 +428,9 @@ pub fn run_daemon(topic: String, interval_ms: u64, response_timeout: Option<u64>
 
     let config = crate::get_config();
     let timer_finish_script = config.on_timer_finish.as_ref().map(PathBuf::from);
-    let response_timeout_secs = response_timeout
-        .map(|t| if t == 0 { None } else { Some(t) })
-        .unwrap_or(config.response_timeout_secs);
+    let response_timeout_secs = response_timeout.map_or(config.response_timeout_secs, |t| {
+        if t == 0 { None } else { Some(t) }
+    });
 
     {
         let state = state.clone();
@@ -454,7 +451,7 @@ pub fn run_daemon(topic: String, interval_ms: u64, response_timeout: Option<u64>
     let audio_stream = match OutputStreamBuilder::open_default_stream() {
         Ok(stream) => Some(stream),
         Err(e) => {
-            eprintln!("Warning: No audio available: {}", e);
+            eprintln!("Warning: No audio available: {e}");
             None
         }
     };
@@ -516,7 +513,7 @@ pub fn run_daemon(topic: String, interval_ms: u64, response_timeout: Option<u64>
         let timeout_ms = response_timeout_secs.map(|s| s * MILLIS_PER_SECOND);
 
         while state.running.load(Ordering::Acquire)
-            && timeout_ms.is_none_or(|t| wait_start.elapsed().as_millis() < t as u128)
+            && timeout_ms.is_none_or(|t| wait_start.elapsed().as_millis() < u128::from(t))
         {
             let (session_start, pause_count, pause_duration) = {
                 let session = state.session_state.lock().unwrap();
@@ -544,9 +541,9 @@ pub fn run_daemon(topic: String, interval_ms: u64, response_timeout: Option<u64>
                     break;
                 }
 
-                let remaining_ms = timeout_ms
-                    .map(|t| t.saturating_sub(wait_start.elapsed().as_millis() as u64))
-                    .unwrap_or(MILLIS_PER_SECOND);
+                let remaining_ms = timeout_ms.map_or(MILLIS_PER_SECOND, |t| {
+                    t.saturating_sub(wait_start.elapsed().as_millis() as u64)
+                });
                 if remaining_ms > 0 {
                     let wait_time = Duration::from_millis(remaining_ms.min(MILLIS_PER_SECOND));
                     let _ = state.response_condvar.wait_timeout(resp_state, wait_time);
@@ -575,7 +572,7 @@ pub fn run_daemon(topic: String, interval_ms: u64, response_timeout: Option<u64>
                 duration_ms: interval_ms,
                 pause_count,
                 pause_duration_ms: pause_duration,
-                topic: topic.clone(),
+                topic,
                 was_working: false,
             };
             let _ = append_stats(&entry);
@@ -597,20 +594,19 @@ pub fn start_timer(topic: String, interval: u64, response_timeout: Option<u64>) 
         ));
     }
 
-    println!("Starting timer: '{}' ({}s intervals)", topic, interval);
+    println!("Starting timer: '{topic}' ({interval}s intervals)");
 
     let daemonize = Daemonize::new()
         .working_directory(get_runtime_dir())
         .umask(0o027);
 
     match daemonize.start() {
-        Ok(_) => {
+        Ok(()) => {
             run_daemon(topic, interval_ms, response_timeout);
             std::process::exit(0);
         }
         Err(e) => Err(TaskBeepError::TimerError(format!(
-            "Failed to daemonize: {}",
-            e
+            "Failed to daemonize: {e}"
         ))),
     }
 }

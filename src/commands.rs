@@ -106,14 +106,14 @@ pub fn show_status(format: &str) -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&json_output).unwrap());
         }
         "plain" => {
-            println!("status={}", status_str);
+            println!("status={status_str}");
             let escaped_topic = status
                 .topic
                 .replace('\\', "\\\\")
                 .replace('\n', "\\n")
                 .replace('\r', "\\r")
                 .replace('=', "\\=");
-            println!("topic={}", escaped_topic);
+            println!("topic={escaped_topic}");
             println!(
                 "interval_seconds={}",
                 status.interval_ms / MILLIS_PER_SECOND
@@ -124,8 +124,7 @@ pub fn show_status(format: &str) -> Result<()> {
         _ => {
             if !format_lower.is_empty() && format_lower != "human" {
                 eprintln!(
-                    "Warning: Invalid format '{}', defaulting to 'human'. Valid options: human, json, plain",
-                    format
+                    "Warning: Invalid format '{format}', defaulting to 'human'. Valid options: human, json, plain"
                 );
             }
             let human_status = match status_enum {
@@ -133,7 +132,7 @@ pub fn show_status(format: &str) -> Result<()> {
                 Status::Waiting => "Waiting for response",
                 Status::Running => "Running",
             };
-            println!("{}", human_status);
+            println!("{human_status}");
             println!("Topic: {}", status.topic);
             println!("Interval: {}s", status.interval_ms / MILLIS_PER_SECOND);
             println!("Sessions completed: {}", status.count);
@@ -186,13 +185,12 @@ fn pause_resume_toggle_impl(
     let response = send_command(cmd)?;
     if response.first() == Some(&RESP_OK) {
         if !quiet {
-            println!("Timer {}", success_action);
+            println!("Timer {success_action}");
         }
         Ok(())
     } else {
         Err(TaskBeepError::TimerError(format!(
-            "Failed to {} timer",
-            error_verb
+            "Failed to {error_verb} timer"
         )))
     }
 }

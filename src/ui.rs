@@ -230,15 +230,16 @@ impl App {
     }
 
     fn active_window(&self) -> Result<(Date, Date, String)> {
-        if let Some(range) = &self.range_filter {
-            Ok((
-                range.start_date,
-                range.end_date,
-                format!("Heatmap ({}..{})", range.start_date, range.end_date),
-            ))
-        } else {
-            year_window(self.default_year)
-        }
+        self.range_filter.as_ref().map_or_else(
+            || year_window(self.default_year),
+            |range| {
+                Ok((
+                    range.start_date,
+                    range.end_date,
+                    format!("Heatmap ({}..{})", range.start_date, range.end_date),
+                ))
+            },
+        )
     }
 
     fn tick(&mut self) {
@@ -291,8 +292,7 @@ impl App {
 
     fn handle_normal_key(&mut self, code: KeyCode) -> Result<bool> {
         match code {
-            KeyCode::Char('q') => return Ok(true),
-            KeyCode::Esc => return Ok(true),
+            KeyCode::Char('q') | KeyCode::Esc => return Ok(true),
             KeyCode::Left | KeyCode::Char('h') => self.move_horizontal(-1),
             KeyCode::Right => self.move_horizontal(1),
             KeyCode::Up | KeyCode::Char('k') => self.move_vertical(-1),
@@ -310,12 +310,11 @@ impl App {
                     value: self.topic_filter.clone().unwrap_or_default(),
                 };
             }
-            KeyCode::Char('r') | KeyCode::Char('g') => {
-                let (start, end) = if let Some(range) = &self.range_filter {
-                    (range.start_input.clone(), range.end_input.clone())
-                } else {
-                    ("~d30".to_string(), "~d0".to_string())
-                };
+            KeyCode::Char('r' | 'g') => {
+                let (start, end) = self.range_filter.as_ref().map_or_else(
+                    || ("~d30".to_string(), "~d0".to_string()),
+                    |range| (range.start_input.clone(), range.end_input.clone()),
+                );
                 self.mode = UiMode::RangeInput {
                     start,
                     end,
@@ -572,7 +571,7 @@ impl App {
         });
         self.clear_error();
         self.rebuild_model()?;
-        self.set_info(format!("range: {}..{}", start_date, end_date));
+        self.set_info(format!("range: {start_date}..{end_date}"));
         Ok(true)
     }
 
@@ -802,7 +801,7 @@ impl App {
             Line::raw(format!("Sessions: {}", day.sessions)),
             Line::raw(format!("Working: {}", DurationDisplay(day.working_ms))),
             Line::raw(format!("Wasting: {}", DurationDisplay(day.wasting_ms))),
-            Line::raw(format!("Productive: {:.1}%", prod_pct)),
+            Line::raw(format!("Productive: {prod_pct:.1}%")),
         ];
 
         // Per-topic breakdown for this day
@@ -852,15 +851,17 @@ impl App {
             }
         }
 
-        let overall_line = match &self.model.overall_best_streak {
-            Some(s) => Line::raw(format!(
-                "Overall: {} days ({} - {})",
-                s.days,
-                short_date(s.start),
-                short_date(s.end)
-            )),
-            None => Line::raw("Overall: -"),
-        };
+        let overall_line = self.model.overall_best_streak.as_ref().map_or_else(
+            || Line::raw("Overall: -"),
+            |s| {
+                Line::raw(format!(
+                    "Overall: {} days ({} - {})",
+                    s.days,
+                    short_date(s.start),
+                    short_date(s.end)
+                ))
+            },
+        );
 
         // Keep overall streak anchored to the bottom row of this fixed-height panel.
         let target_rows = usize::from(STREAKS_PANEL_HEIGHT.saturating_sub(2));
@@ -917,18 +918,18 @@ impl App {
         };
         let y_max = max_total_hours.ceil().max(1.0);
 
-        let start_label = days
-            .first()
-            .map(|(d, _, _)| format!("{:02}/{:02}", d.month() as u8, d.day()))
-            .unwrap_or_else(|| "-".to_string());
-        let mid_label = days
-            .get(days.len().saturating_sub(1) / 2)
-            .map(|(d, _, _)| format!("{:02}/{:02}", d.month() as u8, d.day()))
-            .unwrap_or_else(|| "-".to_string());
-        let end_label = days
-            .last()
-            .map(|(d, _, _)| format!("{:02}/{:02}", d.month() as u8, d.day()))
-            .unwrap_or_else(|| "-".to_string());
+        let start_label = days.first().map_or_else(
+            || "-".to_string(),
+            |(d, _, _)| format!("{:02}/{:02}", d.month() as u8, d.day()),
+        );
+        let mid_label = days.get(days.len().saturating_sub(1) / 2).map_or_else(
+            || "-".to_string(),
+            |(d, _, _)| format!("{:02}/{:02}", d.month() as u8, d.day()),
+        );
+        let end_label = days.last().map_or_else(
+            || "-".to_string(),
+            |(d, _, _)| format!("{:02}/{:02}", d.month() as u8, d.day()),
+        );
 
         WorkWasteChartData {
             work_points,
@@ -952,11 +953,7 @@ impl App {
         match &self.mode {
             UiMode::StartInput { value } => {
                 let mut spans = framed_label("Timer");
-                spans.extend(framed_prompt(
-                    's',
-                    format!(" {} ", value),
-                    Some(enter_span()),
-                ));
+                spans.extend(framed_prompt('s', format!(" {value} "), Some(enter_span())));
                 spans.extend(framed_hotkey_label('t', "oggle"));
                 spans.extend(framed_hotkey_label('x', "stop"));
                 spans.extend(framed_time(self.pending_interval_secs));
@@ -980,18 +977,16 @@ impl App {
                 frame_right(),
             ]),
             _ => {
+                let mut spans = framed_label("Timer");
                 if self.last_status.is_none() {
-                    let mut spans = framed_label("Timer");
                     spans.extend(framed_hotkey_label('s', "tart"));
                     spans.extend(framed_hotkey_label('t', "oggle"));
                     spans.extend(framed_time(self.pending_interval_secs));
-                    Line::from(spans)
                 } else {
-                    let mut spans = framed_label("Timer");
                     spans.extend(framed_hotkey_label('t', "oggle"));
                     spans.extend(framed_hotkey_label('x', "stop"));
-                    Line::from(spans)
                 }
+                Line::from(spans)
             }
         }
     }
@@ -1005,9 +1000,9 @@ impl App {
             } => {
                 let mut spans = framed_label(&self.model.title);
                 let body = if *editing_end {
-                    format!(" {} .. [{}] ", start, end)
+                    format!(" {start} .. [{end}] ")
                 } else {
-                    format!(" [{}] .. {} ", start, end)
+                    format!(" [{start}] .. {end} ")
                 };
                 spans.extend(framed_prompt('r', body, Some(enter_span())));
                 if self.topic_filter.is_some() {
@@ -1020,11 +1015,7 @@ impl App {
             }
             UiMode::FilterInput { value } => {
                 let mut spans = framed_label(&self.model.title);
-                spans.extend(framed_prompt(
-                    'f',
-                    format!(" {} ", value),
-                    Some(enter_span()),
-                ));
+                spans.extend(framed_prompt('f', format!(" {value} "), Some(enter_span())));
                 Line::from(spans)
             }
             _ => {
@@ -1033,7 +1024,7 @@ impl App {
                     spans.extend(vec![
                         frame_left(),
                         hotkey_span('f'),
-                        Span::raw(format!(" {} ", topic)),
+                        Span::raw(format!(" {topic} ")),
                         hotkey_span('d'),
                         Span::raw("el"),
                         frame_right(),
@@ -1172,9 +1163,9 @@ fn format_interval_short(seconds: u64) -> String {
     let remaining_seconds = seconds % 60;
 
     match (minutes, remaining_seconds) {
-        (0, secs) => format!("{}s", secs),
-        (mins, 0) => format!("{}m", mins),
-        (mins, secs) => format!("{}m{}s", mins, secs),
+        (0, secs) => format!("{secs}s"),
+        (mins, 0) => format!("{mins}m"),
+        (mins, secs) => format!("{mins}m{secs}s"),
     }
 }
 
@@ -1204,7 +1195,7 @@ fn build_timer_banner() -> (String, Option<StatusResponse>) {
 fn ascii_countdown_lines(total_seconds: u64) -> Vec<String> {
     let minutes = total_seconds / 60;
     let seconds = total_seconds % 60;
-    let text = format!("{}:{:02}", minutes, seconds);
+    let text = format!("{minutes}:{seconds:02}");
     let mut rows = vec![String::new(); TIMER_FONT_HEIGHT];
 
     // prepend one blank row of top padding
@@ -1342,7 +1333,7 @@ fn level_style(level: u8, accent: HeatmapAccent) -> Style {
     }
 }
 
-fn level_glyph(level: u8) -> char {
+const fn level_glyph(level: u8) -> char {
     match level {
         0 => '·',
         _ => '■',
@@ -1362,16 +1353,16 @@ fn parse_range_endpoint(input: &str, today: Date) -> std::result::Result<Date, S
     if let Some(days_str) = value.strip_prefix("~d") {
         let days: i64 = days_str
             .parse()
-            .map_err(|_| format!("invalid day offset '{}': use ~dN", value))?;
+            .map_err(|_| format!("invalid day offset '{value}': use ~dN"))?;
         return Ok(today - TimeDuration::days(days));
     }
     if let Some(months_str) = value.strip_prefix("~m") {
         let months: u32 = months_str
             .parse()
-            .map_err(|_| format!("invalid month offset '{}': use ~mN", value))?;
+            .map_err(|_| format!("invalid month offset '{value}': use ~mN"))?;
         return shift_months_with_day(today, months)
-            .ok_or_else(|| format!("invalid month offset '{}': out of range", value));
+            .ok_or_else(|| format!("invalid month offset '{value}': out of range"));
     }
     parse_calendar_date(value)
-        .ok_or_else(|| format!("invalid date '{}': expected YYYY-M-D, ~dN, or ~mN", value))
+        .ok_or_else(|| format!("invalid date '{value}': expected YYYY-M-D, ~dN, or ~mN"))
 }

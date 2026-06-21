@@ -117,7 +117,7 @@ enum Commands {
     },
     /// Open interactive one-page terminal UI
     Ui,
-    /// Export statistics to a file (default: ./taskbeep_stats.tsv)
+    /// Export statistics to a file (default: `./taskbeep_stats.tsv`)
     Export {
         /// Output file path
         #[arg(default_value = "taskbeep_stats.tsv")]
@@ -190,14 +190,13 @@ fn main() {
         Commands::Config { path, reset } => {
             if reset {
                 match Config::reset() {
-                    Ok(_) => {
+                    Ok(()) => {
                         println!("Configuration reset to defaults");
                         println!("Config file: {}", Config::config_path().display());
                         Ok(())
                     }
                     Err(e) => Err(TaskBeepError::ConfigError(format!(
-                        "Failed to reset config: {}",
-                        e
+                        "Failed to reset config: {e}"
                     ))),
                 }
             } else if path {
@@ -237,7 +236,7 @@ fn main() {
     };
 
     if let Err(e) = result {
-        eprintln!("Error: {}", e);
+        eprintln!("Error: {e}");
         std::process::exit(1);
     }
 }
