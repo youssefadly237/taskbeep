@@ -343,10 +343,14 @@ impl App {
                 }
             }
             KeyCode::Char('s') => {
-                self.clear_error();
-                self.mode = UiMode::StartInput {
-                    value: String::new(),
-                };
+                if self.last_status.is_none() {
+                    self.clear_error();
+                    self.mode = UiMode::StartInput {
+                        value: String::new(),
+                    };
+                } else {
+                    self.set_error("timer already running".to_string());
+                }
             }
             KeyCode::Char('t') => {
                 self.clear_error();
