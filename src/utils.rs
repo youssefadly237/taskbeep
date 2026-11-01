@@ -411,7 +411,7 @@ pub fn add_months_snap(date: Date, delta: i32) -> Option<Date> {
 /// (clamped to the last valid day of the target month).
 #[cfg(feature = "ui")]
 pub fn shift_months_with_day(date: Date, months_back: u32) -> Option<Date> {
-    let total_months = date.year() * 12 + (date.month() as i32 - 1) - months_back as i32;
+    let total_months = date.year() * 12 + (date.month() as i32 - 1) - months_back.cast_signed();
     let year = total_months.div_euclid(12);
     let month_index = total_months.rem_euclid(12) as u8;
     let month = Month::try_from(month_index + 1).ok()?;

@@ -185,7 +185,7 @@ fn main() {
             heatmap,
         ),
         Commands::Ui => launch_ui(),
-        Commands::Export { output } => export_stats(output),
+        Commands::Export { output } => export_stats(&output),
         Commands::Clear { topic, yes } => clear_stats(topic, yes),
         Commands::Config { path, reset } => {
             if reset {

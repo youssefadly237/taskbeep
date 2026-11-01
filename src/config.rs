@@ -45,7 +45,7 @@ pub struct Config {
         default = "default_response_timeout_secs",
         deserialize_with = "deserialize_response_timeout"
     )]
-    pub response_timeout_secs: Option<u64>,
+    pub response_timeout_secs: u64,
 
     /// Optional script to run when timer finishes (after beep)
     #[serde(default)]
@@ -73,16 +73,15 @@ const fn default_gap_duration() -> f32 {
 const fn default_pause_duration() -> f32 {
     DEFAULT_PAUSE_DURATION
 }
-const fn default_response_timeout_secs() -> Option<u64> {
-    Some(DEFAULT_RESPONSE_TIMEOUT_SECS)
+const fn default_response_timeout_secs() -> u64 {
+    DEFAULT_RESPONSE_TIMEOUT_SECS
 }
 
-fn deserialize_response_timeout<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+fn deserialize_response_timeout<'de, D>(deserializer: D) -> Result<u64, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    let val = Option::<u64>::deserialize(deserializer)?;
-    Ok(val.filter(|&v| v > 0))
+    Option::<u64>::deserialize(deserializer).map(|v| v.filter(|&v| v > 0).unwrap_or(0))
 }
 
 impl Default for Config {
@@ -127,9 +126,7 @@ impl Config {
         if !self.pause_duration.is_finite() || self.pause_duration < 0.0 {
             return Err("pause_duration must be a finite non-negative number".to_string());
         }
-        if let Some(timeout) = self.response_timeout_secs
-            && timeout > 86400
-        {
+        if self.response_timeout_secs > 86400 {
             return Err("response_timeout_secs cannot exceed 86400 seconds (24 hours)".to_string());
         }
 
@@ -171,15 +168,15 @@ impl Config {
     }
 
     pub fn config_path() -> PathBuf {
-        let config_dir = if let Ok(xdg_config) = std::env::var("XDG_CONFIG_HOME") {
-            PathBuf::from(xdg_config)
-        } else if let Ok(home) = std::env::var("HOME") {
-            PathBuf::from(home).join(".config")
-        } else {
-            // Fallback for environments without XDG_CONFIG_HOME or HOME set
-            // Uses .config relative to current directory (e.g., containers, CI)
-            PathBuf::from(".config")
-        };
+        let config_dir = std::env::var("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .ok()
+            .or_else(|| {
+                std::env::var("HOME")
+                    .map(|h| PathBuf::from(h).join(".config"))
+                    .ok()
+            })
+            .unwrap_or_else(|| PathBuf::from(".config"));
 
         config_dir.join("taskbeep").join("config.toml")
     }
@@ -188,8 +185,15 @@ impl Config {
     pub fn load() -> Self {
         let config_path = Self::config_path();
 
-        if let Ok(contents) = fs::read_to_string(&config_path) {
-            match toml::from_str::<Self>(&contents) {
+        fs::read_to_string(&config_path).map_or_else(
+            |_| {
+                let config = Self::default();
+                if let Err(e) = Self::create_default_file() {
+                    eprintln!("Warning: Failed to create default config file: {e}");
+                }
+                config
+            },
+            |contents| match toml::from_str::<Self>(&contents) {
                 Ok(config) => {
                     if let Err(e) = config.validate() {
                         eprintln!("Warning: Invalid config: {e}");
@@ -204,31 +208,24 @@ impl Config {
                     eprintln!("Using default configuration");
                     Self::default()
                 }
-            }
-        } else {
-            let config = Self::default();
-            if let Err(e) = config.create_default_file() {
-                eprintln!("Warning: Failed to create default config file: {e}");
-            }
-            config
-        }
+            },
+        )
     }
 
-    fn create_default_file(&self) -> std::io::Result<()> {
+    fn create_default_file() -> std::io::Result<()> {
+        const TEMPLATE: &str = include_str!("../config.toml.template");
         let config_path = Self::config_path();
 
         if let Some(parent) = config_path.parent() {
             fs::create_dir_all(parent)?;
         }
 
-        const TEMPLATE: &str = include_str!("../config.toml.template");
         fs::write(config_path, TEMPLATE)?;
         Ok(())
     }
 
     pub fn reset() -> std::io::Result<()> {
-        let config = Self::default();
-        config.create_default_file()
+        Self::create_default_file()
     }
 }
 

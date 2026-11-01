@@ -80,13 +80,13 @@ pub fn render_stats_heatmap(entries: &[StatsEntry], year: Option<i32>) -> Result
     let mut window_end: Option<Date> = None;
     for entry in entries {
         if let Ok(date) = local_date_from_ms(entry.start_time_ms, offset) {
-            inferred_year = Some(inferred_year.map_or(date.year(), |y| y.max(date.year())));
+            inferred_year = Some(inferred_year.map_or_else(|| date.year(), |y| y.max(date.year())));
             window_start = Some(window_start.map_or(date, |cur| cur.min(date)));
             window_end = Some(window_end.map_or(date, |cur| cur.max(date)));
         }
     }
 
-    let year = year.or(inferred_year).unwrap_or(today.year());
+    let year = year.or(inferred_year).unwrap_or_else(|| today.year());
     let heatmap = if let (Some(start), Some(end)) = (window_start, window_end) {
         build_heat_grid(entries, start, end, offset)?
     } else {
@@ -123,7 +123,7 @@ pub fn build_heat_aggregation(
 ) -> Result<HeatAggregation> {
     let grid_start = sunday_start_of_week(window_start);
     let grid_end = sunday_end_of_week(window_end);
-    let total_days = (grid_end - grid_start).whole_days() as usize + 1;
+    let total_days = usize::try_from((grid_end - grid_start).whole_days()).unwrap() + 1;
     let weeks = total_days / 7;
 
     let mut by_day: HashMap<Date, u64> = HashMap::new();

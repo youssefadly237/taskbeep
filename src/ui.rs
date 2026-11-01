@@ -120,10 +120,8 @@ fn run_loop(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
             if key.kind != KeyEventKind::Press {
                 continue;
             }
-            match app.handle_key(key.code) {
-                Ok(true) => break,
-                Ok(false) => {}
-                Err(error) => app.set_error(error.to_string()),
+            if app.handle_key(key.code) {
+                break;
             }
         }
 
@@ -253,35 +251,35 @@ impl App {
         self.timer = TimerBanner { state_line };
     }
 
-    fn handle_key(&mut self, code: KeyCode) -> Result<bool> {
+    fn handle_key(&mut self, code: KeyCode) -> bool {
         let mode = std::mem::replace(&mut self.mode, UiMode::Normal);
         match mode {
             UiMode::Normal => self.handle_normal_key(code),
             UiMode::FilterInput { mut value } => {
-                if self.handle_text_input_key(code, &mut value, true)? {
+                if self.handle_text_input_key(code, &mut value, true) {
                     self.mode = UiMode::FilterInput { value };
                 }
-                Ok(false)
+                false
             }
             UiMode::StartInput { mut value } => {
-                if self.handle_text_input_key(code, &mut value, false)? {
+                if self.handle_text_input_key(code, &mut value, false) {
                     self.mode = UiMode::StartInput { value };
                 }
-                Ok(false)
+                false
             }
             UiMode::RangeInput {
                 mut start,
                 mut end,
                 mut editing_end,
             } => {
-                if self.handle_range_input_key(code, &mut start, &mut end, &mut editing_end)? {
+                if self.handle_range_input_key(code, &mut start, &mut end, &mut editing_end) {
                     self.mode = UiMode::RangeInput {
                         start,
                         end,
                         editing_end,
                     };
                 }
-                Ok(false)
+                false
             }
             UiMode::StopConfirm => {
                 self.mode = UiMode::StopConfirm;
@@ -290,9 +288,9 @@ impl App {
         }
     }
 
-    fn handle_normal_key(&mut self, code: KeyCode) -> Result<bool> {
+    fn handle_normal_key(&mut self, code: KeyCode) -> bool {
         match code {
-            KeyCode::Char('q') | KeyCode::Esc => return Ok(true),
+            KeyCode::Char('q') | KeyCode::Esc => return true,
             KeyCode::Left | KeyCode::Char('h') => self.move_horizontal(-1),
             KeyCode::Right => self.move_horizontal(1),
             KeyCode::Up | KeyCode::Char('k') => self.move_vertical(-1),
@@ -324,7 +322,7 @@ impl App {
             KeyCode::Char('d') => {
                 if self.topic_filter.is_some() {
                     self.clear_error();
-                    if let Err(error) = self.apply_filter(String::new()) {
+                    if let Err(error) = self.apply_filter("") {
                         self.set_error(format!("clear topic filter failed: {error}"));
                     } else {
                         self.set_info("topic filter cleared");
@@ -353,7 +351,7 @@ impl App {
             }
             KeyCode::Char('t') => {
                 self.clear_error();
-                match self.toggle_timer() {
+                match Self::toggle_timer() {
                     Ok(message) => self.set_info(message),
                     Err(error) => {
                         self.set_error(format!("toggle failed: {error}"));
@@ -388,7 +386,7 @@ impl App {
             }
             _ => {}
         }
-        Ok(false)
+        false
     }
 
     fn handle_text_input_key(
@@ -396,46 +394,39 @@ impl App {
         code: KeyCode,
         value: &mut String,
         is_filter: bool,
-    ) -> Result<bool> {
+    ) -> bool {
         match code {
             KeyCode::Esc => {
                 self.clear_error();
                 self.mode = UiMode::Normal;
-                Ok(false)
+                false
             }
             KeyCode::Enter => {
                 if is_filter {
                     self.clear_error();
-                    if let Err(error) = self.apply_filter(value.clone()) {
+                    if let Err(error) = self.apply_filter(value) {
                         self.set_error(format!("apply filter failed: {error}"));
-                        return Ok(true);
+                        return true;
                     }
-                } else {
-                    match self.start_timer_from_ui(value.clone()) {
-                        Ok(true) => {}
-                        Ok(false) => return Ok(true),
-                        Err(error) => {
-                            self.set_error(format!("start failed: {error}"));
-                            return Ok(true);
-                        }
-                    }
+                } else if !self.start_timer_from_ui(value) {
+                    return true;
                 }
                 self.mode = UiMode::Normal;
-                Ok(false)
+                false
             }
             KeyCode::Backspace => {
                 value.pop();
-                Ok(true)
+                true
             }
             KeyCode::Char(c) => {
                 value.push(c);
-                Ok(true)
+                true
             }
-            _ => Ok(true),
+            _ => true,
         }
     }
 
-    fn handle_stop_confirm_key(&mut self, code: KeyCode) -> Result<bool> {
+    fn handle_stop_confirm_key(&mut self, code: KeyCode) -> bool {
         match code {
             KeyCode::Esc => {
                 self.mode = UiMode::Normal;
@@ -466,7 +457,7 @@ impl App {
             }
             _ => {}
         }
-        Ok(false)
+        false
     }
 
     fn handle_range_input_key(
@@ -475,16 +466,16 @@ impl App {
         start: &mut String,
         end: &mut String,
         editing_end: &mut bool,
-    ) -> Result<bool> {
+    ) -> bool {
         match code {
             KeyCode::Esc => {
                 self.clear_error();
                 self.mode = UiMode::Normal;
-                Ok(false)
+                false
             }
             KeyCode::Tab => {
                 *editing_end = !*editing_end;
-                Ok(true)
+                true
             }
             KeyCode::Backspace => {
                 if *editing_end {
@@ -492,17 +483,17 @@ impl App {
                 } else {
                     start.pop();
                 }
-                Ok(true)
+                true
             }
-            KeyCode::Enter => match self.apply_range_from_ui(start.clone(), end.clone()) {
+            KeyCode::Enter => match self.apply_range_from_ui(start, end) {
                 Ok(true) => {
                     self.mode = UiMode::Normal;
-                    Ok(false)
+                    false
                 }
-                Ok(false) => Ok(true),
+                Ok(false) => true,
                 Err(error) => {
                     self.set_error(format!("apply range failed: {error}"));
-                    Ok(true)
+                    true
                 }
             },
             KeyCode::Char(ch) => {
@@ -511,13 +502,13 @@ impl App {
                 } else {
                     start.push(ch);
                 }
-                Ok(true)
+                true
             }
-            _ => Ok(true),
+            _ => true,
         }
     }
 
-    fn apply_filter(&mut self, value: String) -> Result<()> {
+    fn apply_filter(&mut self, value: &str) -> Result<()> {
         let normalized = value.trim().to_string();
         let info_message = if normalized.is_empty() {
             "topic filter cleared".to_string()
@@ -534,7 +525,7 @@ impl App {
         Ok(())
     }
 
-    fn apply_range_from_ui(&mut self, start: String, end: String) -> Result<bool> {
+    fn apply_range_from_ui(&mut self, start: &str, end: &str) -> Result<bool> {
         let start_input = start.trim().to_string();
         let end_input = end.trim().to_string();
         if start_input.is_empty() || end_input.is_empty() {
@@ -580,22 +571,22 @@ impl App {
         self.rebuild_model()
     }
 
-    fn start_timer_from_ui(&mut self, value: String) -> Result<bool> {
+    fn start_timer_from_ui(&mut self, value: &str) -> bool {
         if self.last_status.is_some() {
             self.set_error("timer already running".to_string());
-            return Ok(false);
+            return false;
         }
         let topic = value.trim();
         if topic.is_empty() {
             self.set_error("topic is required".to_string());
-            return Ok(false);
+            return false;
         }
 
         let interval = match validate_interval(self.pending_interval_secs) {
             Ok(interval) => interval,
             Err(error) => {
                 self.set_error(error.to_string());
-                return Ok(false);
+                return false;
             }
         };
 
@@ -603,21 +594,19 @@ impl App {
             Ok(exe) => exe,
             Err(error) => {
                 self.set_error(format!("failed to locate executable: {error}"));
-                return Ok(false);
+                return false;
             }
         };
-        let output = Command::new(exe)
+        let output = match Command::new(exe)
             .arg("start")
             .arg(topic)
             .arg(interval.to_string())
             .output()
-            .map_err(|e| TaskBeepError::TimerError(format!("failed to start timer: {e}")));
-
-        let output = match output {
+        {
             Ok(output) => output,
             Err(error) => {
-                self.set_error(error.to_string());
-                return Ok(false);
+                self.set_error(format!("failed to start timer: {error}"));
+                return false;
             }
         };
 
@@ -629,12 +618,12 @@ impl App {
             } else {
                 msg
             });
-            return Ok(false);
+            return false;
         }
 
         self.clear_error();
         self.set_info(format!("started: {topic}"));
-        Ok(true)
+        true
     }
 
     fn set_error(&mut self, message: impl Into<String>) {
@@ -698,7 +687,7 @@ impl App {
             .chars()
             .count()
             .saturating_add(1)
-            .min(u16::MAX as usize) as u16
+            .min(usize::from(u16::MAX)) as u16
     }
 
     fn timer_countdown_lines(&self) -> Vec<Line<'static>> {
@@ -726,7 +715,7 @@ impl App {
         remaining_ms / 1000
     }
 
-    fn toggle_timer(&mut self) -> Result<String> {
+    fn toggle_timer() -> Result<String> {
         match get_status() {
             Ok(status) if Status::from_u8(status.status) == Some(Status::Paused) => {
                 pause_resume_toggle_quiet(CMD_TOGGLE, "resumed", "resume")?;
@@ -746,8 +735,8 @@ impl App {
         }
         let current_week = self.selected_index / 7;
         let row = self.selected_index % 7;
-        let mut week = current_week as isize;
-        let max_week = self.model.weeks.saturating_sub(1) as isize;
+        let mut week = current_week.cast_signed();
+        let max_week = self.model.weeks.saturating_sub(1).cast_signed();
 
         loop {
             let next_week = (week + delta_weeks).clamp(0, max_week);
@@ -755,7 +744,7 @@ impl App {
                 break;
             }
             week = next_week;
-            let idx = week as usize * 7 + row;
+            let idx = week.cast_unsigned() * 7 + row;
             if self.model.cells[idx].in_window {
                 self.selected_index = idx;
                 break;
@@ -767,8 +756,8 @@ impl App {
         if self.model.cells.is_empty() {
             return;
         }
-        let total = self.model.cells.len() as isize;
-        let start = self.selected_index as isize;
+        let total = self.model.cells.len().cast_signed();
+        let start = self.selected_index.cast_signed();
         let mut i = start;
 
         loop {
@@ -776,8 +765,9 @@ impl App {
             if i == start {
                 break;
             }
-            if self.model.cells[i as usize].in_window {
-                self.selected_index = i as usize;
+            let idx = i.cast_unsigned();
+            if self.model.cells[idx].in_window {
+                self.selected_index = idx;
                 break;
             }
         }
@@ -1051,7 +1041,7 @@ impl App {
         }
     }
 
-    fn heatmap_corner_title(&self) -> Line<'_> {
+    fn heatmap_corner_title() -> Line<'static> {
         Line::from(vec![
             frame_left(),
             hotkey_span('←'),
@@ -1065,7 +1055,7 @@ impl App {
         ])
     }
 
-    fn timer_corner_title(&self) -> Line<'_> {
+    fn timer_corner_title() -> Line<'static> {
         let mut spans = Vec::new();
         spans.extend(vec![
             frame_left(),
@@ -1084,15 +1074,15 @@ impl App {
         Line::from(framed_label(&format!("Selected Day ({weekday}, {date})")))
     }
 
-    fn streaks_title(&self) -> Line<'_> {
+    fn streaks_title() -> Line<'static> {
         Line::from(framed_label("Streak Highlights"))
     }
 
-    fn daily_chart_title(&self) -> Line<'_> {
+    fn daily_chart_title() -> Line<'static> {
         Line::from(framed_label("Working vs Wasting"))
     }
 
-    fn daily_chart_legend_lines(&self) -> Vec<Line<'_>> {
+    fn daily_chart_legend_lines() -> Vec<Line<'static>> {
         vec![
             Line::from(Span::styled("work", Style::default().fg(Color::LightGreen))),
             Line::from(Span::styled("waste", Style::default().fg(Color::Yellow))),

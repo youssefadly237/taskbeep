@@ -3,7 +3,7 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{self, BufRead, BufReader, Write},
     os::unix::fs::OpenOptionsExt,
-    path::PathBuf,
+    path::Path,
 };
 use time::{Date, Duration, Month, PrimitiveDateTime, Time, UtcOffset};
 
@@ -161,12 +161,13 @@ fn range_from_period(unit: PeriodUnit, spec: Option<&str>, today: Date) -> Resul
                     .map_err(|e| {
                         TaskBeepError::StatsError(format!("failed to build month start: {e}"))
                     })?;
-                let start = add_months_snap(this_month_start, -(oldest_shift as i32))
+                let start = add_months_snap(this_month_start, -(oldest_shift.cast_signed()))
                     .ok_or_else(|| TaskBeepError::StatsError("invalid month offset".to_string()))?;
-                let end_exclusive = add_months_snap(this_month_start, -(newest_shift as i32) + 1)
-                    .ok_or_else(|| {
-                    TaskBeepError::StatsError("invalid month offset".to_string())
-                })?;
+                let end_exclusive =
+                    add_months_snap(this_month_start, -(newest_shift.cast_signed()) + 1)
+                        .ok_or_else(|| {
+                            TaskBeepError::StatsError("invalid month offset".to_string())
+                        })?;
                 (
                     start,
                     end_exclusive,
@@ -174,8 +175,8 @@ fn range_from_period(unit: PeriodUnit, spec: Option<&str>, today: Date) -> Resul
                 )
             }
             PeriodUnit::Year => {
-                let start_year = today.year() - oldest_shift as i32;
-                let end_year = today.year() - newest_shift as i32;
+                let start_year = today.year() - oldest_shift.cast_signed();
+                let end_year = today.year() - newest_shift.cast_signed();
                 let start = Date::from_calendar_date(start_year, Month::January, 1)
                     .map_err(|e| TaskBeepError::StatsError(format!("invalid year: {e}")))?;
                 let end_exclusive = Date::from_calendar_date(end_year + 1, Month::January, 1)
@@ -240,7 +241,7 @@ fn range_from_period(unit: PeriodUnit, spec: Option<&str>, today: Date) -> Resul
                 .map_err(|e| {
                     TaskBeepError::StatsError(format!("failed to build month start: {e}"))
                 })?;
-            let target_month_start = add_months_snap(this_month_start, -(shift as i32))
+            let target_month_start = add_months_snap(this_month_start, -(shift.cast_signed()))
                 .ok_or_else(|| TaskBeepError::StatsError("invalid month offset".to_string()))?;
             let end = add_months_snap(target_month_start, 1).ok_or_else(|| {
                 TaskBeepError::StatsError("failed to compute end of month".to_string())
@@ -255,7 +256,7 @@ fn range_from_period(unit: PeriodUnit, spec: Option<&str>, today: Date) -> Resul
             (target_month_start, Some(end), label)
         }
         PeriodUnit::Year => {
-            let target_year = today.year() - shift as i32;
+            let target_year = today.year() - shift.cast_signed();
             let start = Date::from_calendar_date(target_year, Month::January, 1)
                 .map_err(|e| TaskBeepError::StatsError(format!("invalid year: {e}")))?;
             let end = Date::from_calendar_date(target_year + 1, Month::January, 1)
@@ -629,7 +630,7 @@ pub fn show_stats(
     Ok(())
 }
 
-pub fn export_stats(output: PathBuf) -> Result<()> {
+pub fn export_stats(output: &Path) -> Result<()> {
     let stats_path = statsfile_path();
     if !stats_path.exists() {
         return Err(TaskBeepError::StatsError(
@@ -637,7 +638,7 @@ pub fn export_stats(output: PathBuf) -> Result<()> {
         ));
     }
 
-    fs::copy(&stats_path, &output)?;
+    fs::copy(&stats_path, output)?;
     println!("Statistics exported to: {}", output.display());
     Ok(())
 }

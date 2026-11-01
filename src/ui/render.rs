@@ -63,7 +63,7 @@ impl Widget for TimerWidget<'_> {
         let timer_block = Block::default()
             .borders(Borders::ALL)
             .title(self.app.timer_title())
-            .title(self.app.timer_corner_title().right_aligned());
+            .title(App::timer_corner_title().right_aligned());
         let timer_inner = timer_block.inner(area);
         timer_block.render(area, buf);
 
@@ -100,7 +100,7 @@ impl Widget for LeftBodyWidget<'_> {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .title(self.app.daily_chart_title()),
+                    .title(App::daily_chart_title()),
             )
             .legend_height(2)
             .render(left_panels[1], buf);
@@ -123,7 +123,7 @@ impl Widget for HeatmapWidget<'_> {
         let block = Block::default()
             .borders(Borders::ALL)
             .title(app.heatmap_title())
-            .title(app.heatmap_corner_title().right_aligned());
+            .title(App::heatmap_corner_title().right_aligned());
         let inner = block.inner(area);
         block.render(area, buf);
 
@@ -259,7 +259,7 @@ impl Widget for ChartWidget<'_> {
         let chart_panel = self.block.unwrap_or_else(|| {
             Block::default()
                 .borders(Borders::ALL)
-                .title(self.app.daily_chart_title())
+                .title(App::daily_chart_title())
         });
         let chart_inner = chart_panel.inner(area);
         chart_panel.render(area, buf);
@@ -270,7 +270,7 @@ impl Widget for ChartWidget<'_> {
             .split(chart_inner);
 
         let chart_legend =
-            Paragraph::new(self.app.daily_chart_legend_lines()).alignment(Alignment::Right);
+            Paragraph::new(App::daily_chart_legend_lines()).alignment(Alignment::Right);
         chart_legend.render(chart_layout[0], buf);
 
         let chart = Chart::new(vec![
@@ -336,7 +336,7 @@ impl Widget for RightBodyWidget<'_> {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .title(self.app.streaks_title()),
+                    .title(App::streaks_title()),
             )
             .wrap(Wrap { trim: false });
         streaks.render(side_panels[1], buf);

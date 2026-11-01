@@ -302,7 +302,7 @@ fn socket_handler(listener: UnixListener, state: Arc<TimerState>, topic: String,
                 let mut buf = [0u8; 512];
                 let mut cursor = Cursor::new(&mut buf[..]);
                 if response.write_to(&mut cursor).is_ok() {
-                    let len = cursor.position() as usize;
+                    let len = usize::try_from(cursor.position()).unwrap();
                     buf[..len].to_vec()
                 } else {
                     vec![RESP_ERROR]
@@ -344,7 +344,7 @@ fn socket_handler(listener: UnixListener, state: Arc<TimerState>, topic: String,
     }
 }
 
-fn play_beep(output_stream: &Option<OutputStream>) {
+fn play_beep(output_stream: Option<&OutputStream>) {
     if let Some(stream) = output_stream {
         let cursor = Cursor::new(crate::get_audio_data());
         if let Ok(source) = Decoder::new(cursor) {
@@ -428,9 +428,8 @@ pub fn run_daemon(topic: String, interval_ms: u64, response_timeout: Option<u64>
 
     let config = crate::get_config();
     let timer_finish_script = config.on_timer_finish.as_ref().map(PathBuf::from);
-    let response_timeout_secs = response_timeout.map_or(config.response_timeout_secs, |t| {
-        if t == 0 { None } else { Some(t) }
-    });
+    let timeout_secs = response_timeout.unwrap_or(config.response_timeout_secs);
+    let response_timeout_secs = (timeout_secs > 0).then_some(timeout_secs);
 
     {
         let state = state.clone();
@@ -493,7 +492,7 @@ pub fn run_daemon(topic: String, interval_ms: u64, response_timeout: Option<u64>
         }
 
         let beep_time = now_ms();
-        play_beep(&audio_stream);
+        play_beep(audio_stream.as_ref());
 
         let duration_secs = interval_ms / MILLIS_PER_SECOND;
         let current_count = state.completed_count.fetch_add(1, Ordering::AcqRel) + 1;
