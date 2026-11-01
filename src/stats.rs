@@ -503,6 +503,22 @@ pub fn read_stats_entries(filter_start_ms: Option<u64>) -> Result<Vec<StatsEntry
     Ok(entries)
 }
 
+/// Return unique topics from `entries`, ordered by most recent activity first.
+/// Ties are broken alphabetically for deterministic output.
+pub fn topics_by_recency(entries: &[StatsEntry]) -> Vec<String> {
+    let mut last_active: HashMap<String, u64> = HashMap::new();
+    for entry in entries {
+        let slot = last_active.entry(entry.topic.clone()).or_insert(0);
+        if entry.start_time_ms > *slot {
+            *slot = entry.start_time_ms;
+        }
+    }
+
+    let mut topics: Vec<(String, u64)> = last_active.into_iter().collect();
+    topics.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
+    topics.into_iter().map(|(topic, _)| topic).collect()
+}
+
 pub fn show_stats(
     topic: Option<&str>,
     day: Option<&str>,

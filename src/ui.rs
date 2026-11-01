@@ -14,7 +14,7 @@ use crate::{
     get_config,
     heatmap::{HeatCell, HeatDayStats, build_heat_aggregation},
     protocol::{CMD_TOGGLE, Status, StatusResponse, get_status},
-    stats::{StatsEntry, read_stats_entries},
+    stats::{StatsEntry, read_stats_entries, topics_by_recency},
     utils::{
         DurationDisplay, HeatmapAccent, MAX_INTERVAL_SECS, day_label, heatmap_cell_level,
         heatmap_legend_levels, month_abbrev, now_ms, parse_calendar_date, shift_months_with_day,
@@ -475,15 +475,9 @@ impl App {
             }
             KeyCode::Up => {
                 let total_options = 1 + matches.len();
-                if total_options > 1 {
-                    if *selected_index == 0 {
-                        *selected_index = total_options - 1;
-                    } else {
-                        *selected_index -= 1;
-                    }
-                    if *selected_index == 0 {
-                        *value = search_query.clone();
-                    } else if let Some(topic) = matches.get(*selected_index - 1).cloned() {
+                if total_options > 1 && *selected_index + 1 < total_options {
+                    *selected_index += 1;
+                    if let Some(topic) = matches.get(*selected_index - 1).cloned() {
                         *value = topic;
                     }
                 }
@@ -491,8 +485,8 @@ impl App {
             }
             KeyCode::Down => {
                 let total_options = 1 + matches.len();
-                if total_options > 1 {
-                    *selected_index = (*selected_index + 1) % total_options;
+                if total_options > 1 && *selected_index > 0 {
+                    *selected_index -= 1;
                     if *selected_index == 0 {
                         *value = search_query.clone();
                     } else if let Some(topic) = matches.get(*selected_index - 1).cloned() {
@@ -520,18 +514,10 @@ impl App {
     }
 
     fn get_matching_topics(&self, input: &str) -> Vec<String> {
-        let mut topics: Vec<String> = if input.is_empty() {
-            self.all_entries.iter().map(|e| e.topic.clone()).collect()
-        } else {
-            self.all_entries
-                .iter()
-                .filter(|e| topic_matches(input, &e.topic))
-                .map(|e| e.topic.clone())
-                .collect()
-        };
-        topics.sort();
-        topics.dedup();
-        topics
+        topics_by_recency(&self.all_entries)
+            .into_iter()
+            .filter(|topic| topic_matches(input, topic))
+            .collect()
     }
 
     fn handle_stop_confirm_key(&mut self, code: KeyCode) -> bool {
