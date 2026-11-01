@@ -1,0 +1,50 @@
+fail_fast = true
+
+[[repos]]
+repo = "local"
+
+[[repos.hooks]]
+id = "cargo-fmt"
+name = "cargo fmt"
+entry = "cargo fmt --all -- --check"
+language = "system"
+types = ["rust"]
+pass_filenames = false
+groups = ["format", "rust"]
+
+[[repos.hooks]]
+id = "cargo-clippy"
+name = "cargo clippy"
+entry = "cargo clippy --all-targets --all-features -- -D warnings"
+language = "system"
+types = ["rust"]
+pass_filenames = false
+groups = ["lint", "rust"]
+
+[[repos.hooks]]
+id = "cargo-clippy-no-default"
+name = "cargo clippy --no-default-features"
+entry = "cargo clippy --all-targets --no-default-features -- -D warnings"
+language = "system"
+types = ["rust"]
+pass_filenames = false
+groups = ["lint", "rust"]
+
+[[repos.hooks]]
+id = "cargo-test"
+name = "cargo test"
+entry = "cargo test --all-features"
+language = "system"
+types = ["rust"]
+pass_filenames = false
+groups = ["test", "rust"]
+
+[[repos.hooks]]
+id = "cargo-test-no-default"
+name = "cargo test --no-default-features"
+entry = "cargo test --no-default-features"
+language = "system"
+types = ["rust"]
+pass_filenames = false
+groups = ["test", "rust"]
+
