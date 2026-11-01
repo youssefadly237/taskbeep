@@ -10,8 +10,8 @@ use crate::{
     error::{Result, TaskBeepError},
     stats::StatsEntry,
     utils::{
-        DurationDisplay, HeatmapAccent, day_label, heatmap_cell_level, heatmap_legend_levels,
-        local_date_from_ms, sunday_end_of_week, sunday_start_of_week,
+        DurationDisplay, HeatmapAccent, day_label, heatmap_cell_level, heatmap_effective_max,
+        heatmap_legend_levels, local_date_from_ms, sunday_end_of_week, sunday_start_of_week,
     },
 };
 
@@ -160,7 +160,6 @@ pub fn build_heat_aggregation(
     }
 
     let mut cells = Vec::with_capacity(total_days);
-    let mut max_working_ms = 0u64;
     let mut total_working_ms = 0u64;
     for day_index in 0..total_days {
         let date = grid_start + Duration::days(day_index as i64);
@@ -171,7 +170,6 @@ pub fn build_heat_aggregation(
             0
         };
         if in_window {
-            max_working_ms = max_working_ms.max(working_ms);
             total_working_ms += working_ms;
         }
         cells.push(HeatCell {
@@ -180,6 +178,14 @@ pub fn build_heat_aggregation(
             working_ms,
         });
     }
+
+    let max_working_ms = heatmap_effective_max(
+        &cells
+            .iter()
+            .filter(|cell| cell.in_window)
+            .map(|cell| cell.working_ms)
+            .collect::<Vec<_>>(),
+    );
 
     Ok(HeatAggregation {
         grid: HeatGrid {
@@ -336,7 +342,7 @@ mod tests {
         );
         assert_eq!(
             heatmap.max_working_ms,
-            4 * 3_600 * crate::utils::MILLIS_PER_SECOND
+            3 * 3_600 * crate::utils::MILLIS_PER_SECOND
         );
     }
 

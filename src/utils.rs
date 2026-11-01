@@ -352,6 +352,18 @@ fn wildcard_match(pat: &str, text: &str) -> bool {
     dp[m][n]
 }
 
+/// Winsorized max for the heatmap intensity scale: the 90th percentile of
+/// nonzero daily working times, so one extreme day takes the top bucket
+/// without flattening everything else pale.
+pub fn heatmap_effective_max(values: &[u64]) -> u64 {
+    let mut nonzero: Vec<u64> = values.iter().copied().filter(|&value| value > 0).collect();
+    if nonzero.is_empty() {
+        return 0;
+    }
+    nonzero.sort_unstable();
+    nonzero[((nonzero.len() - 1) * 9) / 10].max(1)
+}
+
 /// Heatmap intensity level (`0–HEATMAP_LEVELS`) from working ms and maximum ms.
 /// Uses sqrt normalisation so mid-range values stay visible.
 pub fn heatmap_intensity(working_ms: u64, max_working_ms: u64) -> u8 {
@@ -643,6 +655,18 @@ mod tests {
                 i - 1
             );
         }
+    }
+
+    // --- heatmap_effective_max ---
+
+    #[test]
+    fn heatmap_effective_max_ignores_outlier() {
+        assert_eq!(heatmap_effective_max(&[]), 0);
+        assert_eq!(heatmap_effective_max(&[0, 0]), 0);
+        assert_eq!(heatmap_effective_max(&[5]), 5);
+        let mut counts = vec![10u64; 10];
+        counts.push(1000);
+        assert_eq!(heatmap_effective_max(&counts), 10);
     }
 
     // --- parse_calendar_date ---
