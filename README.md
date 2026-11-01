@@ -354,6 +354,19 @@ taskbeep config --reset
 cat $(taskbeep config --path)
 ```
 
+### Shell Completions
+
+```bash
+taskbeep completions bash    # static script
+taskbeep completions zsh
+taskbeep completions fish
+```
+
+Or dynamic completions:
+```bash
+source <(COMPLETE=bash taskbeep)
+```
+
 ## Installation
 
 ```bash
