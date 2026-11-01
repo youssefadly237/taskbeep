@@ -40,7 +40,7 @@ pub fn get_audio_data() -> &'static [u8] {
             pause_duration: config.pause_duration,
             volume: config.volume,
         };
-        audio::generate_beep_audio(&audio_config)
+        audio::generate_beep_audio(&audio_config, audio::SAMPLE_RATE)
     })
 }
 

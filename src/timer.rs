@@ -12,7 +12,7 @@ use std::{
 };
 
 use daemonize::Daemonize;
-use rodio::{Decoder, OutputStream, OutputStreamBuilder, Sink};
+use rodio::{Decoder, DeviceSinkBuilder, MixerDeviceSink};
 
 use crate::error::{Result, TaskBeepError};
 use crate::protocol::{
@@ -344,13 +344,24 @@ fn socket_handler(listener: UnixListener, state: Arc<TimerState>, topic: String,
     }
 }
 
-fn play_beep(output_stream: Option<&OutputStream>) {
-    if let Some(stream) = output_stream {
-        let cursor = Cursor::new(crate::get_audio_data());
-        if let Ok(source) = Decoder::new(cursor) {
-            let sink = Sink::connect_new(stream.mixer());
-            sink.append(source);
-            sink.sleep_until_end();
+fn play_beep(device: Option<&MixerDeviceSink>) {
+    if let Some(device) = device {
+        let config = crate::get_config();
+        let audio_config = crate::audio::AudioConfig {
+            beep_frequency: config.beep_frequency,
+            first_beep_duration: config.first_beep_duration,
+            second_beep_duration: config.second_beep_duration,
+            gap_duration: config.gap_duration,
+            pause_duration: config.pause_duration,
+            volume: config.volume,
+        };
+        let audio_data =
+            crate::audio::generate_beep_audio(&audio_config, device.config().sample_rate().get());
+        let cursor = Cursor::new(audio_data);
+        if let Ok(source) = Decoder::try_from(cursor) {
+            let player = rodio::Player::connect_new(device.mixer());
+            player.append(source);
+            player.sleep_until_end();
         }
     }
 }
@@ -447,13 +458,15 @@ pub fn run_daemon(topic: String, interval_ms: u64, response_timeout: Option<u64>
         });
     }
 
-    let audio_stream = match OutputStreamBuilder::open_default_stream() {
-        Ok(stream) => Some(stream),
-        Err(e) => {
+    let audio_stream = DeviceSinkBuilder::from_default_device()
+        .map(|builder| builder.with_sample_rate(std::num::NonZero::new(44_100).unwrap()))
+        .and_then(|builder| builder.open_sink_or_fallback())
+        .or_else(|_| DeviceSinkBuilder::open_default_sink())
+        .map(Some)
+        .unwrap_or_else(|e| {
             eprintln!("Warning: No audio available: {e}");
             None
-        }
-    };
+        });
 
     while state.running.load(Ordering::Acquire) {
         {

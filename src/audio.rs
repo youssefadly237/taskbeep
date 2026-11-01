@@ -1,7 +1,7 @@
 use hound::{SampleFormat, WavSpec, WavWriter};
 use std::{f32::consts::PI, io::Cursor};
 
-const SAMPLE_RATE: u32 = 44100;
+pub const SAMPLE_RATE: u32 = 44100;
 const FADE_DURATION_S: f32 = 0.005;
 const BITS_PER_SAMPLE: u16 = 16;
 const MAX_AMPLITUDE: f32 = 32767.0;
@@ -55,19 +55,19 @@ fn gen_beep(freq: f32, dur: f32, vol: f32, sr: u32) -> Vec<i16> {
         .collect()
 }
 
-pub fn generate_beep_audio(config: &AudioConfig) -> Vec<u8> {
+pub fn generate_beep_audio(config: &AudioConfig, sample_rate: u32) -> Vec<u8> {
     let beep1 = gen_beep(
         config.beep_frequency,
         config.first_beep_duration,
         config.volume,
-        SAMPLE_RATE,
+        sample_rate,
     );
-    let gap = vec![0i16; (SAMPLE_RATE as f32 * config.gap_duration) as usize];
+    let gap = vec![0i16; (sample_rate as f32 * config.gap_duration) as usize];
     let beep2 = gen_beep(
         config.beep_frequency,
         config.second_beep_duration,
         config.volume,
-        SAMPLE_RATE,
+        sample_rate,
     );
 
     let mut pattern = Vec::new();
@@ -75,7 +75,7 @@ pub fn generate_beep_audio(config: &AudioConfig) -> Vec<u8> {
     pattern.extend_from_slice(&gap);
     pattern.extend_from_slice(&beep2);
 
-    let pause = vec![0i16; (SAMPLE_RATE as f32 * config.pause_duration) as usize];
+    let pause = vec![0i16; (sample_rate as f32 * config.pause_duration) as usize];
 
     let mut audio = Vec::new();
     audio.extend_from_slice(&pattern);
@@ -83,7 +83,7 @@ pub fn generate_beep_audio(config: &AudioConfig) -> Vec<u8> {
 
     let spec = WavSpec {
         channels: 1,
-        sample_rate: SAMPLE_RATE,
+        sample_rate,
         bits_per_sample: BITS_PER_SAMPLE,
         sample_format: SampleFormat::Int,
     };
